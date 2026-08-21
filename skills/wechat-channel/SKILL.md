@@ -1,46 +1,68 @@
 ---
-name: wechat-channel
-description: 用微信 iLink 渠道收发私信。用户要登录微信、回微信、把 Grok Bot 接到微信时使用。
+name: 微信渠道
+description: 把 Grok Bot 接到微信 iLink 私信。用户要安装、登录、用微信对话或任务完成推送时使用。入站用 webhook 唤醒，不要用定时扫描。
 ---
+# 微信渠道（iLink + Webhook）
 
-# 微信渠道（iLink）
+你通过 MCP `grok-wechat` 连接微信个人号。底层是腾讯 iLink（`ilinkai.weixin.qq.com`）。
 
-你通过 MCP `grok-wechat` 连接微信个人号。底层是腾讯 iLink（`ilinkai.weixin.qq.com`），和 OpenClaw 官方插件 `@tencent-weixin/openclaw-weixin` 同一条通道。
+**入站唤醒必须走 Webhook，禁止建「每分钟 / 每 2 分钟处理收件箱」这类定时 Routine。**
+Grok Bot 没有原生「微信消息」触发器。正确链路是：
 
-## 登录
+`微信 → iLink 长轮询 monitor → 收件箱 → POST webhook → 本 agent 醒来 → 回复微信`
 
-1. 调用 `wechat_login_start`，把返回的 `image` 给用户看（链接或二维码图）。
-2. 请用户用手机微信扫码并确认。
-3. 反复调用 `wechat_login_wait`，直到 `logged_in=true`。
-4. 二维码过期则重新 `wechat_login_start`。
+任务做完、需要用户拍板：你已经醒着，立刻 `wechat_send`，不走 webhook。
 
-登录态写在 `GROK_WECHAT_HOME`（默认 `~/.grok-wechat`，Grok Bot 电脑上建议 `/workspace/.grok-wechat`）。
+身份字段：`base_info.bot_agent = Grokbot/1.0.0`。连接页应显示 Grokbot，不是 OpenClaw。微信里「ClawBot」是腾讯产品名，改不了。
 
-## 自动值守（与 OpenClaw Gateway 同类效果）
+状态目录：`GROK_WECHAT_HOME`（盒上默认 `/home/box/.grok-wechat`）。
+Webhook 地址和密钥只写在 `$GROK_WECHAT_HOME/wake.json`（权限 600），不要写进仓库、不要回显到聊天。
 
-通道建立后按这个循环工作：
+## 安装时你必须自动做完的事
 
-1. `wechat_start_monitor` 启动后台长轮询（只启动一次）。
-2. 建一条 Routine：持续或每分钟执行「处理微信收件箱」。
-3. 每次：`wechat_wait`（或 `wechat_inbox`）取出用户私信。
-4. 对每条消息：
-   - `wechat_typing` `on=true`，`to_user_id` 用这条的 `from_user_id`
-   - 用你的能力生成回复（查文件、上网、用其它插件）
-   - `wechat_send` 纯文本回复，`to_user_id` 用同一用户
-   - 需要发本地文件时用 `wechat_send_media`
-   - `wechat_typing` `on=false`
-5. 没有新消息就继续等，不要向用户报告空轮询。
+用户一说「装上 / 接到微信 / 用微信跟我说话」，按顺序自己做。只有「扫码」和「把 webhook 地址密钥发来」两步才停下来请用户操作。
 
-没有 monitor 时，`wechat_wait` 自己做 35 秒长轮询，效果相同，只是 Routine 必须一直跑。
+### A. 装好 MCP（你做）
 
-## 协议约定
+1. 确认插件代码在盒上。没有就从用户工程拷过来。
+2. 添加本地 MCP `grok-wechat`：`/usr/bin/node` + `server/index.js` 绝对路径，env `GROK_WECHAT_HOME=/home/box/.grok-wechat`。
+3. stdio 用换行分隔 JSON（MCP 2025-11-25），不要 Content-Length。
+4. 写好 connector 自定义说明。
 
-- 只处理私信。入站 `from_user_id` 形如 `xxx@im.wechat`。
-- 回复必须带该用户已缓存的 `context_token`。工具会自动带上；对方必须先从微信发过一条消息，通道才成立。
-- 微信不渲染 Markdown。`wechat_send` 会转成纯文本，你直接写可读的中文即可。
-- 单条文本最长约 4000 字，更长会自动拆条。
-- `allow_from` 为空：接收全部私信。要限制发送者时用 `wechat_approve` 写入用户 ID。
+### B. 建立 Webhook Routine（你做）
 
-## 状态
+只建一条，名叫 `微信入站唤醒`，trigger 只能是 webhook。若已有定时「微信私信值守」，删掉。
 
-随时可用 `wechat_status` 看是否已登录、monitor 是否在跑、已建立会话的用户列表。
+Routine prompt：入站后 `wechat_status` → 保证 monitor → `wechat_inbox` → 逐条 typing / 回复 / send。空则安静。只回微信。
+
+### C. 必须用户动手：Webhook 地址
+
+告诉用户打开「微信入站唤醒」，确认是 Webhook 且已启用，把 hook URL 和密钥发到对话。写入 `wake.json` 后探测（Bearer），不要把密钥发回聊天。
+
+### D. 必须用户动手：扫码
+
+`wechat_login_start`（POST，带 bot_agent）出码 → 用户扫 → `wechat_login_wait`。过期重出码。
+
+### E. 拉起通道（你做）
+
+`wechat_start_monitor`，确认登录，通知用户可以微信说话。对方先发一条才有 context_token。任务完成立刻 wechat_send。
+
+## 入站唤醒后
+
+`wechat_inbox`；空则安静。有消息则微信里直接回。不要把用户赶回 App。
+
+## 协议
+
+只处理私信。回复依赖 context_token。纯文本。不要用定时 Routine 当修复。
+
+## 卸载时你必须自动做完的事
+
+Settings 或 UninstallMcpServer 只摘掉账号里的 MCP，不会删文件、不会停长轮询。用户说卸载 / 卸掉微信插件时，按顺序自己做完，不要只卸 MCP。
+
+1. 停 monitor：读 `$GROK_WECHAT_HOME/monitor.pid`，进程还在就杀掉；再 `pkill -f "grok-wechat-plugin/server/index.js --monitor"` 兜底。
+2. 卸 MCP：`UninstallMcpServer`，server_id 一般是 `user-grok-wechat`。
+3. 删 webhook Routine「微信入站唤醒」（以及残留的定时收件箱 Routine）。
+4. 删盒上文件：`/home/box/grok-wechat-plugin`、`$GROK_WECHAT_HOME`（默认 `/home/box/.grok-wechat`）、scratch 副本 `/workspace/grok-wechat-plugin`。
+5. 不要动用户本机工程里的插件源码，除非用户明确说连源码一起删。
+
+也可跑插件里的 `scripts/uninstall.sh`。卸完告诉用户：通道已停，重新用要再装、再扫码、再贴 webhook。

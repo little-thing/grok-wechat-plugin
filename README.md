@@ -1,30 +1,25 @@
-# grok-wechat
+# grok-wechat-plugin
 
-给 Grok Bot 用的微信渠道插件。底层是腾讯官方 iLink Bot API（`ilinkai.weixin.qq.com`），和 OpenClaw 的 `@tencent-weixin/openclaw-weixin` 同一套协议：扫码登录、长轮询收私信、`context_token` 回发、CDN 媒体、正在输入。
+Grok Bot 的微信 iLink 渠道。入站走 webhook 唤醒，不走定时扫描。
 
-需要本机 Node 18+。无第三方 npm 依赖。
+## 链路
 
-## 装到 Grok Bot
+微信私信 -> iLink 长轮询 monitor -> inbox -> POST webhook -> agent 醒来 -> wechat_send
 
-1. 把整个 `grok-wechat-plugin` 目录拷到 Grok Bot 电脑，例如 `/workspace/grok-wechat-plugin`。
-2. Grok Bot → **Settings → Plugins → Add**，新增 MCP：
-   - command: `node`
-   - args: `/workspace/grok-wechat-plugin/server/index.js`
-   - 环境变量（建议）：`GROK_WECHAT_HOME=/workspace/.grok-wechat`
-3. 在对话里 `@` 这个 connector，对 Bot 说：「登录微信，然后值守私信并回复」。
-4. 扫码完成后，建一条 Routine：持续处理微信收件箱（skill `wechat-channel` 里写了循环）。
+任务做完立刻 wechat_send，不经过 webhook。
 
-也可以链到 Cursor 本机：`ln -s /绝对路径/grok-wechat-plugin ~/.cursor/plugins/local/grok-wechat`，再 Reload Window。Grok Bot 读不到这台 Mac 的本地目录，云端 Bot 仍要按上面 1–2 步加 MCP。
+## 安装（agent 自动做）
 
-## 效果对应
+1. 拷插件到盒上并 AddMcpServer（node + server/index.js，GROK_WECHAT_HOME=/home/box/.grok-wechat）
+2. 只建一条 webhook Routine「微信入站唤醒」
+3. 用户把 hook URL 和密钥发来，写入 wake.json（chmod 600），探测 Bearer
+4. wechat_login_start 出码，用户扫微信；wechat_login_wait
+5. wechat_start_monitor
 
-| OpenClaw | 本插件 |
-|---|---|
-| 扫码 `channels login` | `wechat_login_start` + `wechat_login_wait` |
-| Gateway sidecar 长轮询 | `wechat_start_monitor` 或 Routine 里 `wechat_wait` |
-| 入站路由到 Agent | Routine 取消息后由 Grok Bot 推理 |
-| `sendmessage` + context_token | `wechat_send` / `wechat_send_media` |
-| 正在输入 | `wechat_typing` |
-| pairing allowlist | `wechat_approve` |
+bot_agent 必须是 Grokbot/1.0.0。不要建每分钟收件箱 Routine。密钥不要回显。
 
-登录成功后，对方必须先从微信给你发一条消息，才能回得回去（iLink 用这条消息发放 `context_token`）。
+详见 skills/wechat-channel/SKILL.md
+
+## 卸载
+
+Settings 卸 MCP 不会删文件。让 agent 卸，或跑 scripts/uninstall.sh：停 monitor、卸 MCP、删 Routine、删 /home/box/grok-wechat-plugin 和 /home/box/.grok-wechat。不删用户本机源码。
