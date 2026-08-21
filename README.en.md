@@ -12,9 +12,31 @@ Send this in Grok Bot:
 Install this WeChat plugin https://github.com/little-thing/grok-wechat-plugin
 ```
 
-Scan the WeChat QR code, then paste the webhook URL and secret from Routine `微信入站唤醒`.
+## Binding
 
-See `skills/wechat-channel/SKILL.md`.
+Follow the conversation. The full flow looks like this:
+
+![Install, confirm the channel, scan the QR code, paste the webhook](docs/bind-flow.png)
+
+1. **Confirm the channel**  
+   Tap **加** in the chat to attach the WeChat channel to this machine.
+
+2. **Connector and routine**  
+   The assistant adds the WeChat connector and creates Routine **「微信入站唤醒」** (trigger: when the webhook fires). It shows up under Routines in the sidebar.
+
+3. **Scan to log in**  
+   Scan the QR code in the chat with WeChat on your phone.
+
+4. **Paste the webhook**  
+   Open the settings for Routine「微信入站唤醒」, copy the **webhook URL** and **secret**, and paste them back. After a successful probe, the channel is ready.
+
+When someone DMs you on WeChat, the bot can reply there.
+
+## After binding
+
+Talk in WeChat as usual:
+
+![Send a WeChat DM and get a reply](docs/bind-effect.png)
 
 ## Flow
 
@@ -23,6 +45,8 @@ WeChat DM → monitor inbox → POST webhook → agent wakes → `wechat_send`
 After a task finishes, call `wechat_send`.
 
 `bot_agent` is `Grokbot/1.0.0`.
+
+See `skills/wechat-channel/SKILL.md` for install details.
 
 ## Uninstall
 
