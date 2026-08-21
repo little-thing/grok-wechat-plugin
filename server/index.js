@@ -54,26 +54,6 @@ async function sleep(ms) {
   await new Promise((r) => setTimeout(r, ms));
 }
 
-async function pullOnce() {
-  const raw = await getUpdates();
-  if (raw.session_expired) {
-    return { session_expired: true, messages: [], hint: "会话过期，稍后再 wechat_wait，或重新扫码登录" };
-  }
-  const collected = await collectInbound(raw.msgs || []);
-  const allowed = collected.messages.filter((m) => isAllowed(loadState(), m.from_user_id));
-  return { session_expired: false, messages: allowed };
-}
-
-async function waitInbox(timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const n = peekInboxCount();
-    if (n > 0) return { messages: drainInbox(), from_monitor: true };
-    await sleep(1000);
-  }
-  return { messages: drainInbox(), from_monitor: true };
-}
-
 const tools = {
   wechat_login_start: {
     description: "获取微信 iLink 登录二维码。把 image 展示给用户扫码，然后调用 wechat_login_wait。",
@@ -126,17 +106,6 @@ const tools = {
       return ok({ logged_out: true });
     },
   },
-  wechat_wait: {
-    description: "等待下一批入站私信。无 monitor 时自己长轮询；有 monitor 时读收件箱。只返回用户消息。",
-    inputSchema: {
-      type: "object",
-      properties: { timeout_ms: { type: "number", description: "默认 35000" } },
-    },
-    handle: async ({ timeout_ms }) => {
-      if (monitorRunning()) return ok(await waitInbox(timeout_ms || 35_000));
-      return ok(await pullOnce());
-    },
-  },
   wechat_inbox: {
     description: "立即取出 monitor 缓存的入站消息（取出后清空）。",
     inputSchema: { type: "object", properties: {} },
@@ -181,7 +150,7 @@ const tools = {
     handle: async ({ on, to_user_id }) => ok(await setTyping(to_user_id, on)),
   },
   wechat_start_monitor: {
-    description: "在本机后台启动长轮询，把入站消息写入收件箱。与 OpenClaw sidecar monitor 同类。",
+    description: "在本机后台启动长轮询，把入站消息写入收件箱并 POST webhook 唤醒 agent。",
     inputSchema: { type: "object", properties: {} },
     handle: async () => {
       const existing = monitorRunning();
@@ -398,7 +367,7 @@ async function runMonitor() {
       }
     } catch (err) {
       failures += 1;
-      log(`poll error ${err instanceof Error ? err.message : String(err)}`);
+      log(`getupdates error ${err instanceof Error ? err.message : String(err)}`);
       await sleep(failures >= 3 ? 30_000 : 2_000);
     }
   }
