@@ -2,24 +2,25 @@
 
 Grok Bot 的微信 iLink 渠道。入站走 webhook 唤醒，不走定时扫描。
 
+## 一句话安装
+
+在 Grok Bot 里粘贴：
+
+```
+安装这个微信插件 https://github.com/little-thing/grok-wechat-plugin
+```
+
+## 给安装 agent
+
+1. 先拉取并严格按 [skills/wechat-channel/SKILL.md](https://raw.githubusercontent.com/little-thing/grok-wechat-plugin/main/skills/wechat-channel/SKILL.md)（或仓库内同路径文件）执行，不要向用户索要 clone、拷贝或 MCP JSON。
+2. 按 SKILL 完成安装：把本仓库下载到 Grok Bot 的电脑 `/home/box/grok-wechat-plugin`，注册本地 MCP，建 webhook Routine，写 wake.json，扫码登录，启动 monitor。
+
 ## 链路
 
-微信私信 -> iLink 长轮询 monitor -> inbox -> POST webhook -> agent 醒来 -> wechat_send
+微信私信 → iLink 长轮询 monitor → inbox → POST webhook → agent 醒来 → wechat_send
 
 任务做完立刻 wechat_send，不经过 webhook。
 
-## 安装（agent 自动做）
-
-1. 拷插件到盒上并 AddMcpServer（node + server/index.js，GROK_WECHAT_HOME=/home/box/.grok-wechat）
-2. 只建一条 webhook Routine「微信入站唤醒」
-3. 用户把 hook URL 和密钥发来，写入 wake.json（chmod 600），探测 Bearer
-4. wechat_login_start 出码，用户扫微信；wechat_login_wait
-5. wechat_start_monitor
-
-bot_agent 必须是 Grokbot/1.0.0。不要建每分钟收件箱 Routine。密钥不要回显。
-
-详见 skills/wechat-channel/SKILL.md
-
 ## 卸载
 
-Settings 卸 MCP 不会删文件。让 agent 卸，或跑 scripts/uninstall.sh：停 monitor、卸 MCP、删 Routine、删 /home/box/grok-wechat-plugin 和 /home/box/.grok-wechat。不删用户本机源码。
+Settings 只卸 MCP 注册，不会删文件、停 monitor 或删 Routine。让 agent 按 SKILL 卸载，或跑 `scripts/uninstall.sh`：停 monitor、卸 MCP、删 Routine、删 `/home/box/grok-wechat-plugin` 与 `/home/box/.grok-wechat`。不删用户个人电脑上的副本。
