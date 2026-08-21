@@ -1,0 +1,12 @@
+{
+  "name": "grok-wechat",
+  "displayName": "Grok WeChat",
+  "version": "1.0.0",
+  "description": "微信 iLink 渠道：扫码登录、私信收发、媒体、正在输入。与 OpenClaw 官方微信插件同一套底层协议。",
+  "author": {
+    "name": "local"
+  },
+  "keywords": ["wechat", "weixin", "ilink", "mcp"],
+  "mcpServers": "./mcp.json",
+  "skills": "./skills"
+}
