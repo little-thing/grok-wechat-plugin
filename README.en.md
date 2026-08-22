@@ -22,7 +22,7 @@ Follow the conversation. The full flow looks like this:
    Tap **加** in the chat to attach the WeChat channel to Grok Bot.
 
 2. **Connector and routine**  
-   The assistant adds the WeChat connector and, on this same assistant, creates Routine **「微信入站唤醒」** (webhook) and **「微信监听保活」** (every 5 minutes, only start the listener). Both show up under Routines.
+   The assistant adds the WeChat connector (available to every assistant) and creates Routine **「微信入站唤醒」** (webhook) and **「微信监听保活」** (every 5 minutes, only start the listener). Both show up under Routines.
 
 3. **Scan to log in**  
    Scan the QR code in the chat with WeChat on your phone.

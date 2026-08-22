@@ -16,9 +16,9 @@ description: 用户要在 Grok Bot 里安装、登录、收发或卸载微信 iL
 
 ## 安装
 
-把本渠道接到 Grok Bot。用户需要：确认添加连接器（若主机要求）、扫码、把 webhook 地址和密钥发来。
+把本渠道接到 Grok Bot。技能就是本文件（本插件 `skills/wechat-channel/SKILL.md`）。用户需要：确认添加连接器（若主机要求）、扫码、把 webhook 地址和密钥发来。
 
-两条 Routine 建在正在安装、负责回微信的那个助手上。
+连接器是账号级的，装好后所有助手都能用 `wechat_*` 收发。同时建两条 Routine：
 
 - 连接器：`grok-wechat`，入口 `server/index.js`。登录后或连接器启动时会拉起 monitor。
 - Routine `微信入站唤醒`：webhook。入站后 `wechat_inbox` → typing / `wechat_send`。没有新消息就安静。只回微信。
