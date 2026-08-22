@@ -6,7 +6,7 @@ description: 用户要在 Grok Bot 里安装、登录、收发或卸载微信 iL
 
 通过 MCP `grok-wechat` 连接微信个人号。底层是腾讯 iLink（`ilinkai.weixin.qq.com`）。
 
-`微信私信 → monitor 收件箱 → POST 该号专属 webhook → 专属助手醒来 → wechat_send`
+`微信私信 → monitor 收件箱 → POST 共享 webhook → 安装助手醒来 → wechat_inbox → 按 ilink_bot_id 转交专属助手 → wechat_send`
 
 任务做完或需要用户拍板：立刻 `wechat_send`。
 
@@ -16,40 +16,34 @@ description: 用户要在 Grok Bot 里安装、登录、收发或卸载微信 iL
 
 ## 安装
 
-把本渠道接到 Grok Bot。技能就是本文件（本插件 `skills/wechat-channel/SKILL.md`）。
+用户发一句「安装这个微信插件 https://github.com/little-thing/grok-wechat-plugin」即完成本渠道安装。技能就是本文件（本插件 `skills/wechat-channel/SKILL.md`）。
 
-连接器是账号级的，所有助手共用 `grok-wechat` 连接器（入口 `server/index.js`）。每个扫码绑定的微信个人号配一个专属 Grok Bot 助手。
+安装完成后 Grok Bot 上具备：
 
-### 每次扫码绑定后的流程
+1. **连接器** `grok-wechat`，入口 `server/index.js`。用户若需确认则点「加」添加连接器。
+2. **插件文件**落在 Grok Bot 电脑（`/home/box/grok-wechat-plugin`）。
+3. **monitor 自启**：用户登录或 MCP `initialize` 时调用 `wechat_start_monitor` 拉起后台长轮询。
+4. **安装助手**创建两条 Routine（全渠道共用，只建一次）：
+   - **「微信入站唤醒」**（webhook）：入站后 `wechat_inbox` → 按 `ilink_bot_id` 转交专属助手
+   - **「微信监听保活」**：每 5 分钟，提示词 `只调用 wechat_start_monitor，确保微信入站监听在跑。除此之外什么都不要做。`
+5. **全局 webhook（粘贴一次）**：Grok Bot 创建 webhook Routine 时**不会**把 url/key 返回给 agent；用户从该 Routine 面板复制 **webhook 地址**和**密钥**发来一次。安装助手调用 `wechat_set_wake`（url、key，省略 `ilink_bot_id`）写入全局 `wake.json`（权限 600），当前及后续所有已绑定账号共用。`wechat_status` 的 `global_wake_configured=true` 表示入站已就绪。
+6. **扫码绑定**：`wechat_login_start` 出码并向用户展示 → 立即 `wechat_login_wait`，重复调用直至 `logged_in=true`；若 `expired=true` 则重新 `wechat_login_start` 后再 `wechat_login_wait`。对方先发一条才有 context_token。
 
-1. `wechat_login_start` 出码 → 用户扫码 → `wechat_login_wait`。
-2. 绑定成功后 `wechat_login_wait` 返回该账号的 `ilink_bot_id`、`ilink_user_id`。
-3. 为该微信用户**创建专属助手**。
-4. 在该助手下创建 Routine **「微信入站唤醒」**（webhook）。入站后 `wechat_inbox` → typing / `wechat_send`，只处理该号的私信。
-5. 调用 `wechat_set_wake`，传入该账号的 `ilink_bot_id` 与该 Routine 的 webhook 地址和密钥。配置写入 `account.json`（权限 600），并探测 Bearer。
-6. 该微信号的入站只 POST 该助手的 webhook；其他已绑定号不受影响。
+每次扫码绑定成功后：
 
-### 共用配置
+1. `wechat_login_wait` 返回该账号的 `ilink_bot_id`、`ilink_user_id`。
+2. 该号复用全局 `wake.json`，**无需**再建入站 Routine、**无需**再粘贴 webhook。
+3. 为该微信号码**创建专属 Grok Bot 助手**（专属助手**不**创建「微信入站唤醒」）。
+4. 调用 `wechat_set_dedicated_assistant`（`ilink_bot_id`、`assistant_id`、`assistant_name`）写入 `account.json`。
+5. 入站由安装助手 `wechat_inbox` 后按 `ilink_bot_id` 转交该专属助手处理。
 
-- Routine **「微信监听保活」**：每 5 分钟，任意一个助手或安装助手执行即可。提示词：`只调用 wechat_start_monitor，确保微信入站监听在跑。除此之外什么都不要做。` 一次调用为所有已绑定账号拉起 monitor。
-- 若某账号未配置专属 wake，`wake.json`（权限 600）作为回退 webhook。
+多账号：每扫一个新码重复步骤 1–5；全局 webhook 覆盖全部已绑定号。`wechat_status` 列出 `global_wake_configured`、各账号 `has_wake` 与 `dedicated_assistant_name`。
 
 stdio 用换行分隔 JSON（MCP 2025-11-25）。
 
-## 多账号绑定
-
-一个连接器可绑定多个微信个人号，每人独立扫码、独立专属助手：
-
-1. 第一个人扫码绑定 → 创建助手 A → `wechat_set_wake` 绑定 A 的 webhook。
-2. 第二个人再次 `wechat_login_start` 拿新码 → 扫码 → 创建助手 B → `wechat_set_wake` 绑定 B 的 webhook；A 保持在线。
-3. `wechat_status` 列出所有已绑定账号及各自是否已配置专属 wake（`has_wake`）。
-4. monitor 为每个已绑定账号并发长轮询；入站消息带 `ilink_bot_id`，只唤醒对应助手的 webhook。
-5. 专属助手回复时用入站消息里的 `to_user_id` 和 `ilink_bot_id` 调用 `wechat_send` / `wechat_typing` / `wechat_send_media`。
-6. `wechat_logout` 默认登出全部；传 `ilink_bot_id` 只登出一个。
-
 ## 入站之后
 
-`wechat_inbox`。有消息则在微信里回复。每条消息含 `ilink_bot_id`、`from_user_id`。用同一 `ilink_bot_id` 回复该用户。语音按转写文本处理，用 `wechat_send` 回文字。
+共享入站助手被 webhook 唤醒后 `wechat_inbox`。每条消息含 `ilink_bot_id`、`from_user_id`。按 `ilink_bot_id` 转交对应专属助手；回复时用同一 `ilink_bot_id` 调用 `wechat_send` / `wechat_typing` / `wechat_send_media`。语音按转写文本处理。
 
 ## 协议
 
@@ -57,4 +51,36 @@ stdio 用换行分隔 JSON（MCP 2025-11-25）。
 
 ## 卸载
 
-停 monitor，卸连接器，删各助手下的 Routine「微信入站唤醒」和共用「微信监听保活」，清掉本渠道在 Grok Bot 上的代码和状态。也可跑 `scripts/uninstall.sh`。重新用要再装、再扫码、再配 webhook。
+在 Grok Bot 里发：
+
+```
+卸掉微信插件
+```
+
+安装助手**执行**下列全部步骤。
+
+### 1. 本机清理
+
+调用 `wechat_uninstall`（或 `scripts/uninstall.sh`）：
+
+- 停止所有 monitor 进程
+- 删除 `/home/box/grok-wechat-plugin` 与 `GROK_WECHAT_HOME` / `/home/box/.grok-wechat`（含 `account.json`、`wake.json`、token、inbox、media、pid、log、`ensure-monitor.sh`）
+- 清理 crontab 与 shell 自启项
+
+返回 `dedicated_assistants_sidebar_delete`（绑定期间登记的专属助手名称）。
+
+### 2. 平台清理（安装助手执行）
+
+1. **卸载** `grok-wechat` 连接器。
+2. **删除**安装助手上 Routine「微信入站唤醒」与「微信监听保活」。
+3. **删除**其他助手上残留的同名 Routine。
+4. 根据 `dedicated_assistant_sidebar_names`，**告知用户**在侧栏右键 → 删除所列专属助手（如「微信1」「微信2」）。
+
+### 3. 完成标准
+
+- 无 `grok-wechat` 连接器
+- 无插件目录、无 `.grok-wechat` 状态
+- 无 monitor 进程
+- 无「微信入站唤醒」「微信监听保活」Routine
+- 用户已在侧栏删除 `dedicated_assistants_sidebar_delete` 所列专属助手
+- 重装后 `wechat_status` 为零账号，需重新粘贴 webhook 并扫码

@@ -33,6 +33,7 @@ export function emptyAccount() {
     contextTokens: {},
     typingTickets: {},
     wake: null,
+    dedicatedAssistant: null,
   };
 }
 
@@ -128,7 +129,7 @@ export function requireAccount(state, { ilink_bot_id, ilink_user_id } = {}) {
     return account;
   }
   const accounts = listAccounts(state);
-  if (!accounts.length) throw new Error("未登录。先 wechat_login_start，扫码后再 wechat_login_wait");
+  if (!accounts.length) throw new Error("未登录。先 wechat_login_start 出码，立即 wechat_login_wait 至 logged_in=true");
   if (accounts.length === 1) return accounts[0];
   throw new Error("已绑定多个微信账号，请指定 ilink_bot_id");
 }
@@ -282,13 +283,30 @@ export function loadFallbackWake() {
   return null;
 }
 
+export function saveGlobalWake(url, key) {
+  ensureHome();
+  const wakeFile = fallbackWakePath();
+  const tmp = `${wakeFile}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify({ url, key }, null, 2));
+  fs.renameSync(tmp, wakeFile);
+  try {
+    fs.chmodSync(wakeFile, 0o600);
+  } catch {
+    // ignore
+  }
+}
+
+export function hasGlobalWake() {
+  return Boolean(loadFallbackWake());
+}
+
 export function resolveWakeForAccount(account) {
   if (account?.wake?.url && account?.wake?.key) return account.wake;
   return loadFallbackWake();
 }
 
 export function hasAccountWake(account) {
-  return Boolean(account?.wake?.url && account?.wake?.key);
+  return hasGlobalWake() || Boolean(account?.wake?.url && account?.wake?.key);
 }
 
 export function saveStateSecure(next) {

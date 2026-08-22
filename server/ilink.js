@@ -6,6 +6,7 @@ import {
   emptyAccount,
   findAccount,
   hasAccountWake,
+  hasGlobalWake,
   listAccounts,
   loadState,
   localTokenList,
@@ -14,6 +15,7 @@ import {
   rememberContext,
   resolveAccountForPeer,
   requireAccount,
+  saveGlobalWake,
   saveStateSecure,
   updateState,
   upsertAccount,
@@ -110,6 +112,8 @@ function accountSummary(account) {
     ilink_user_id: account.ilinkUserId,
     logged_in: Boolean(account.token),
     has_wake: hasAccountWake(account),
+    dedicated_assistant_id: account.dedicatedAssistant?.id || "",
+    dedicated_assistant_name: account.dedicatedAssistant?.name || "",
   };
 }
 
@@ -142,7 +146,8 @@ export async function loginStart() {
     qrcode,
     image: img,
     existing_accounts: listAccounts(state).map(accountSummary),
-    hint: "用手机微信扫描该二维码并确认登录，然后调用 wechat_login_wait。已有账号会保持在线。",
+    next: "wechat_login_wait",
+    hint: "向用户展示二维码后，立即调用 wechat_login_wait，轮询至 logged_in=true。",
   };
 }
 
@@ -172,7 +177,7 @@ export async function loginWait(timeoutMs = 120_000, qrcodeArg) {
         ilink_bot_id: account.ilinkBotId,
         ilink_user_id: account.ilinkUserId,
         accounts: listAccounts(loadState()).map(accountSummary),
-        hint: "为该微信用户创建专属助手，在其助手下建 Routine「微信入站唤醒」，再 wechat_set_wake 绑定 webhook。",
+        hint: "绑定完成。为该号创建专属 Grok Bot 助手，调用 wechat_set_dedicated_assistant 登记 assistant_id 与 assistant_name。后续扫码绑定无需再配 webhook。",
       };
     }
     if (last.status === "binded_redirect" && last.bot_token) {
@@ -189,7 +194,7 @@ export async function loginWait(timeoutMs = 120_000, qrcodeArg) {
         ilink_bot_id: account.ilinkBotId,
         ilink_user_id: account.ilinkUserId,
         accounts: listAccounts(loadState()).map(accountSummary),
-        hint: "为该微信用户创建专属助手，在其助手下建 Routine「微信入站唤醒」，再 wechat_set_wake 绑定 webhook。",
+        hint: "绑定完成。为该号创建专属 Grok Bot 助手，调用 wechat_set_dedicated_assistant 登记 assistant_id 与 assistant_name。后续扫码绑定无需再配 webhook。",
       };
     }
     if (last.status === "expired") {
@@ -197,10 +202,10 @@ export async function loginWait(timeoutMs = 120_000, qrcodeArg) {
         s.pendingQrs = s.pendingQrs.filter((p) => p.qrcode !== qrcode);
         return s;
       });
-      return { logged_in: false, expired: true, hint: "二维码已过期，重新调用 wechat_login_start" };
+      return { logged_in: false, expired: true, next: "wechat_login_start", hint: "调用 wechat_login_start 取新码，出码后立即 wechat_login_wait" };
     }
   }
-  return { logged_in: false, status: last.status || "wait", hint: "继续调用 wechat_login_wait，或重新取码" };
+  return { logged_in: false, status: last.status || "wait", next: "wechat_login_wait", hint: "立即再次调用 wechat_login_wait" };
 }
 
 export async function notifyStart(account) {
@@ -520,6 +525,7 @@ export function statusPayload() {
   return {
     logged_in: accounts.length > 0,
     account_count: accounts.length,
+    global_wake_configured: hasGlobalWake(),
     accounts: accounts.map((a) => ({
       ...accountSummary(a),
       peers: Object.keys(a.contextTokens || {}),
@@ -548,20 +554,37 @@ export async function probeWake(url, key) {
 }
 
 export async function setAccountWake(ilink_bot_id, url, key) {
-  const state = loadState();
-  const account = requireAccount(state, { ilink_bot_id });
   if (!url || !key) throw new Error("url 和 key 必填");
   const probe = await probeWake(url, key);
+  saveGlobalWake(url, key);
+  if (ilink_bot_id) {
+    updateState((s) => {
+      const hit = findAccount(s, { ilink_bot_id });
+      if (hit) hit.wake = { url, key };
+      return s;
+    });
+  }
+  saveStateSecure(loadState());
+  return {
+    global_wake_configured: true,
+    ilink_bot_id: ilink_bot_id || null,
+    probe,
+    accounts: listAccounts(loadState()).map(accountSummary),
+  };
+}
+
+export function setDedicatedAssistant(ilink_bot_id, assistant_id, assistant_name) {
+  if (!ilink_bot_id) throw new Error("ilink_bot_id 必填");
+  if (!assistant_name) throw new Error("assistant_name 必填");
   updateState((s) => {
-    const hit = findAccount(s, { ilink_bot_id });
-    if (hit) hit.wake = { url, key };
+    const hit = requireAccount(s, { ilink_bot_id });
+    hit.dedicatedAssistant = {
+      id: assistant_id || hit.dedicatedAssistant?.id || "",
+      name: assistant_name,
+    };
     return s;
   });
   saveStateSecure(loadState());
-  return {
-    ilink_bot_id: account.ilinkBotId,
-    ilink_user_id: account.ilinkUserId,
-    wake_configured: true,
-    probe,
-  };
+  const account = findAccount(loadState(), { ilink_bot_id });
+  return accountSummary(account);
 }

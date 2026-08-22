@@ -27,9 +27,11 @@ import {
   sendMedia,
   sendText,
   setAccountWake,
+  setDedicatedAssistant,
   setTyping,
   statusPayload,
 } from "./ilink.js";
+import { registerShutdownCleanup, touchConnectorActive, connectorAbandoned, runUninstall, uninstallWechat } from "./uninstall.js";
 
 const self = fileURLToPath(import.meta.url);
 
@@ -80,12 +82,12 @@ const accountRefSchema = {
 
 const tools = {
   wechat_login_start: {
-    description: "获取新的微信 iLink 登录二维码。已有绑定账号会保持在线，可继续扫码绑定更多账号。",
+    description: "获取并向用户展示微信 iLink 登录二维码。出码后下一步立即调用 wechat_login_wait，轮询至 logged_in=true。",
     inputSchema: { type: "object", properties: {} },
     handle: async () => ok(await loginStart()),
   },
   wechat_login_wait: {
-    description: "等待用户扫码确认。可重复调用直到 logged_in=true。",
+    description: "轮询等待扫码结果。wechat_login_start 出码后立即调用；logged_in=false 且未过期时重复调用；expired=true 时重新 wechat_login_start 后再 wait。",
     inputSchema: {
       type: "object",
       properties: {
@@ -206,17 +208,31 @@ const tools = {
     handle: async () => ok(ensureMonitor()),
   },
   wechat_set_wake: {
-    description: "为指定已绑定微信账号保存专属 webhook（url + key）。入站只唤醒该账号对应的助手。保存后探测 Bearer。",
+    description: "保存全局入站 webhook（wake.json，权限 600），供当前及后续所有已绑定账号共用。ilink_bot_id 可选；传入时同时写入该账号并仍保留全局配置。",
     inputSchema: {
       type: "object",
       properties: {
-        ilink_bot_id: { type: "string", description: "要配置 webhook 的已绑定账号 bot id" },
-        url: { type: "string", description: "该助手 Routine「微信入站唤醒」的 webhook 地址" },
+        url: { type: "string", description: "安装助手 Routine「微信入站唤醒」的 webhook 地址" },
         key: { type: "string", description: "webhook 密钥" },
+        ilink_bot_id: { type: "string", description: "可选，同时写入该已绑定账号；省略则仅设置全局 wake" },
       },
-      required: ["ilink_bot_id", "url", "key"],
+      required: ["url", "key"],
     },
     handle: async ({ ilink_bot_id, url, key }) => ok(await setAccountWake(ilink_bot_id, url, key)),
+  },
+  wechat_set_dedicated_assistant: {
+    description: "为已绑定微信账号登记专属 Grok Bot 助手 id/名称。每次扫码绑定成功后创建专属助手并调用，供入站按 ilink_bot_id 转交与卸载侧栏列表。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ilink_bot_id: { type: "string", description: "已绑定账号 bot id" },
+        assistant_id: { type: "string", description: "专属助手 id" },
+        assistant_name: { type: "string", description: "专属助手侧栏名称（如「微信1」）" },
+      },
+      required: ["ilink_bot_id", "assistant_name"],
+    },
+    handle: async ({ ilink_bot_id, assistant_id, assistant_name }) =>
+      ok(setDedicatedAssistant(ilink_bot_id, assistant_id, assistant_name)),
   },
   wechat_stop_monitor: {
     description: "停止后台长轮询。",
@@ -246,6 +262,11 @@ const tools = {
       });
       return ok({ allow_from: state.allowFrom });
     },
+  },
+  wechat_uninstall: {
+    description: "完整卸载微信渠道：停止 monitor、删除状态与插件目录、清理自启项；返回 platform_cleanup 与 dedicated_assistants_sidebar_delete（侧栏专属助手名称列表）。",
+    inputSchema: { type: "object", properties: {} },
+    handle: async () => ok(uninstallWechat()),
   },
 };
 
@@ -279,6 +300,7 @@ async function onRpc(msg) {
   } catch { /* ignore */ }
   const { id, method, params } = msg;
   if (method === "initialize") {
+    touchConnectorActive();
     ensureMonitor();
     return {
       jsonrpc: "2.0",
@@ -293,9 +315,11 @@ async function onRpc(msg) {
   if (method === "notifications/initialized" || method === "initialized") return null;
   if (method === "ping") return { jsonrpc: "2.0", id, result: {} };
   if (method === "tools/list") {
+    touchConnectorActive();
     return { jsonrpc: "2.0", id, result: { tools: TOOL_LIST } };
   }
   if (method === "tools/call") {
+    touchConnectorActive();
     const result = await dispatch(params?.name, params?.arguments);
     return { jsonrpc: "2.0", id, result };
   }
@@ -304,6 +328,7 @@ async function onRpc(msg) {
 }
 
 function startMcp() {
+  registerShutdownCleanup();
   ensureMonitor();
   let buf = Buffer.alloc(0);
   process.stdin.on("data", async (chunk) => {
@@ -419,6 +444,11 @@ async function runMonitor() {
   let failures = 0;
   while (true) {
     try {
+      if (connectorAbandoned()) {
+        log("connector removed, running uninstall");
+        runUninstall();
+        process.exit(0);
+      }
       const accountsNow = listAccounts();
       if (!accountsNow.length) {
         log("no accounts, stopping");
@@ -448,6 +478,8 @@ if (process.argv.includes("--monitor")) {
   runMonitor();
 } else if (process.argv.includes("--ensure-monitor")) {
   process.stdout.write(JSON.stringify(ensureMonitor()) + "\n");
+} else if (process.argv.includes("--uninstall")) {
+  process.stdout.write(`${JSON.stringify(runUninstall({ deferPluginRemoval: false }), null, 2)}\n`);
 } else {
   startMcp();
 }
