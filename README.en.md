@@ -21,14 +21,14 @@ Follow the conversation. The full flow looks like this:
 1. **Confirm the channel**  
    Tap **加** in the chat to attach the WeChat channel to Grok Bot.
 
-2. **Connector and routine**  
-   The assistant adds the WeChat connector (available to every assistant) and creates Routine **「微信入站唤醒」** (webhook) and **「微信监听保活」** (every 5 minutes, only start the listener). Both show up under Routines.
+2. **Connector and dedicated assistants**  
+   The assistant adds the shared WeChat connector. After each QR bind, it creates a **dedicated assistant** for that WeChat user, adds Routine **「微信入站唤醒」** (webhook) on that assistant, and calls `wechat_set_wake` with that account's `ilink_bot_id`. One shared Routine **「微信监听保活」** (every 5 minutes, `wechat_start_monitor`) covers all accounts.
 
 3. **Scan to log in**  
-   Scan the QR code in the chat with WeChat on your phone.
+   Scan the QR code in the chat with WeChat on your phone. To bind another account, request a new QR code, create another dedicated assistant, and `wechat_set_wake` for that bind.
 
-4. **Paste the webhook**  
-   Open the settings for Routine「微信入站唤醒」, copy the **webhook URL** and **secret**, and paste them back. After a successful probe, the channel is ready.
+4. **Configure webhook**  
+   Copy the **webhook URL** and **secret** from the dedicated assistant's Routine「微信入站唤醒」, then call `wechat_set_wake` with that account's `ilink_bot_id`. After the probe succeeds, DMs to that WeChat number wake only that assistant.
 
 When someone DMs you on WeChat, the bot can reply there.
 
@@ -38,9 +38,13 @@ Talk in WeChat as usual:
 
 ![Send a WeChat DM and get a reply](docs/bind-effect.png)
 
+## Multiple accounts
+
+One connector can bind multiple WeChat personal accounts. Each bind gets its own dedicated assistant and webhook via `wechat_set_wake`. DMs to account A wake only assistant A; B is unchanged. `wechat_status` lists all accounts and `has_wake`.
+
 ## Flow
 
-WeChat DM → monitor inbox → POST webhook → agent wakes → `wechat_send`
+WeChat DM → monitor inbox → POST that account's webhook → dedicated assistant wakes → `wechat_send`
 
 After a task finishes, call `wechat_send`.
 
