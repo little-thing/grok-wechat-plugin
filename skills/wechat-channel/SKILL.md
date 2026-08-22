@@ -18,10 +18,13 @@ description: 用户要在 Grok Bot 里安装、登录、收发或卸载微信 iL
 
 把本渠道接到 Grok Bot。用户需要：确认添加连接器（若主机要求）、扫码、把 webhook 地址和密钥发来。
 
-- 连接器：`grok-wechat`，入口 `server/index.js`。
-- Routine：webhook，名称 `微信入站唤醒`。入站后 `wechat_status` → monitor → `wechat_inbox` → typing / `wechat_send`。没有新消息就安静。只回微信。
+两条 Routine 建在正在安装、负责回微信的那个助手上。
+
+- 连接器：`grok-wechat`，入口 `server/index.js`。登录后或连接器启动时会拉起 monitor。
+- Routine `微信入站唤醒`：webhook。入站后 `wechat_inbox` → typing / `wechat_send`。没有新消息就安静。只回微信。
+- Routine `微信监听保活`：每 5 分钟只调用 `wechat_start_monitor`，不判断、不说话。
 - 用户贴来的 hook URL 和密钥写入状态目录的 `wake.json`（权限 600），探测 Bearer。密钥只写文件。
-- `wechat_login_start` 出码 → 用户扫 → `wechat_login_wait` → `wechat_start_monitor`。对方先发一条才有 context_token。
+- `wechat_login_start` 出码 → 用户扫 → `wechat_login_wait`。对方先发一条才有 context_token。
 
 stdio 用换行分隔 JSON（MCP 2025-11-25）。
 
@@ -35,4 +38,4 @@ stdio 用换行分隔 JSON（MCP 2025-11-25）。
 
 ## 卸载
 
-停 monitor，卸连接器，删 Routine「微信入站唤醒」，清掉本渠道在 Grok Bot 上的代码和状态。也可跑 `scripts/uninstall.sh`。重新用要再装、再扫码、再贴 webhook。
+停 monitor，卸连接器，删 Routine「微信入站唤醒」和「微信监听保活」，清掉本渠道在 Grok Bot 上的代码和状态。也可跑 `scripts/uninstall.sh`。重新用要再装、再扫码、再贴 webhook。

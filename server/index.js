@@ -54,6 +54,21 @@ async function sleep(ms) {
   await new Promise((r) => setTimeout(r, ms));
 }
 
+function ensureMonitor() {
+  const existing = monitorRunning();
+  if (existing) return { already_running: true, pid: existing };
+  const s = loadState();
+  if (!s.token) return { started: false, reason: "not_logged_in" };
+  const child = spawn(process.execPath, [self, "--monitor"], {
+    detached: true,
+    stdio: "ignore",
+    env: process.env,
+  });
+  child.unref();
+  writePid(child.pid);
+  return { started: true, pid: child.pid };
+}
+
 const tools = {
   wechat_login_start: {
     description: "获取微信 iLink 登录二维码。把 image 展示给用户扫码，然后调用 wechat_login_wait。",
@@ -66,7 +81,11 @@ const tools = {
       type: "object",
       properties: { timeout_ms: { type: "number", description: "本次等待毫秒，默认 120000" } },
     },
-    handle: async ({ timeout_ms }) => ok(await loginWait(timeout_ms || 120_000)),
+    handle: async ({ timeout_ms }) => {
+      const r = await loginWait(timeout_ms || 120_000);
+      if (r && r.logged_in) ensureMonitor();
+      return ok(r);
+    },
   },
   wechat_status: {
     description: "查看登录态、最近会话、allowlist、monitor 是否在跑。",
@@ -150,21 +169,9 @@ const tools = {
     handle: async ({ on, to_user_id }) => ok(await setTyping(to_user_id, on)),
   },
   wechat_start_monitor: {
-    description: "在本机后台启动长轮询，把入站消息写入收件箱并 POST webhook 唤醒 agent。",
+    description: "在本机后台启动长轮询，把入站消息写入收件箱并 POST webhook 唤醒 agent。已在跑则直接返回。",
     inputSchema: { type: "object", properties: {} },
-    handle: async () => {
-      const existing = monitorRunning();
-      if (existing) return ok({ already_running: true, pid: existing });
-      loadState();
-      const child = spawn(process.execPath, [self, "--monitor"], {
-        detached: true,
-        stdio: "ignore",
-        env: process.env,
-      });
-      child.unref();
-      writePid(child.pid);
-      return ok({ started: true, pid: child.pid });
-    },
+    handle: async () => ok(ensureMonitor()),
   },
   wechat_stop_monitor: {
     description: "停止后台长轮询。",
@@ -228,6 +235,7 @@ async function onRpc(msg) {
   } catch { /* ignore */ }
   const { id, method, params } = msg;
   if (method === "initialize") {
+    ensureMonitor();
     return {
       jsonrpc: "2.0",
       id,
@@ -252,6 +260,7 @@ async function onRpc(msg) {
 }
 
 function startMcp() {
+  ensureMonitor();
   let buf = Buffer.alloc(0);
   process.stdin.on("data", async (chunk) => {
     buf = Buffer.concat([buf, chunk]);
@@ -375,6 +384,8 @@ async function runMonitor() {
 
 if (process.argv.includes("--monitor")) {
   runMonitor();
+} else if (process.argv.includes("--ensure-monitor")) {
+  process.stdout.write(JSON.stringify(ensureMonitor()) + "\n");
 } else {
   startMcp();
 }
