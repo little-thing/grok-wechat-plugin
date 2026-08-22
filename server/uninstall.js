@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { clearPid, homeDir, monitorRunning, readPid } from "./store.js";
+import { clearPid, homeDir, listAccounts, loadState, monitorRunning, readPid } from "./store.js";
 
 const PLUGIN_DIR_NAMES = ["grok-wechat-plugin"];
 const GROK_BOX_HOME = "/home/box";
@@ -241,19 +241,36 @@ export function registerShutdownCleanup() {
   process.stdin?.once("close", run);
 }
 
-function platformCleanup() {
+function collectDedicatedAssistants() {
+  return listAccounts(loadState())
+    .map((a) => ({
+      ilink_bot_id: a.ilinkBotId,
+      assistant_id: a.dedicatedAssistant?.id || "",
+      assistant_name: a.dedicatedAssistant?.name || "",
+    }))
+    .filter((a) => a.assistant_id || a.assistant_name);
+}
+
+function platformCleanup(dedicatedAssistants) {
+  const sidebarNames = dedicatedAssistants.map((a) => a.assistant_name).filter(Boolean);
   return {
     connector: "grok-wechat",
     routine_names: ["微信入站唤醒", "微信监听保活"],
+    dedicated_assistants_sidebar_delete: dedicatedAssistants,
+    dedicated_assistant_sidebar_names: sidebarNames,
     execute: [
       "从 Grok Bot Settings 卸载 grok-wechat 连接器（若仍存在）",
       "删除安装助手上 Routine「微信入站唤醒」与「微信监听保活」",
       "删除其他助手上残留的同名 Routine",
+      sidebarNames.length
+        ? `告知用户在侧栏右键 → 删除专属助手：${sidebarNames.join("、")}`
+        : "告知用户在侧栏删除绑定期间创建的专属助手",
     ],
   };
 }
 
 export function runUninstall({ deferPluginRemoval = false } = {}) {
+  const dedicatedAssistants = collectDedicatedAssistants();
   const stoppedPids = stopAllMonitors();
   const removedAutostart = removeAutostartEntries();
   const removedStateDirs = removeAllStateHomes();
@@ -274,7 +291,8 @@ export function runUninstall({ deferPluginRemoval = false } = {}) {
     removed_plugin_dirs: removedPluginDirs,
     removed_autostart: removedAutostart,
     deferred_plugin_removal: deferredPluginRemoval,
-    platform_cleanup: platformCleanup(),
+    dedicated_assistants_sidebar_delete: dedicatedAssistants,
+    platform_cleanup: platformCleanup(dedicatedAssistants),
   };
 }
 

@@ -27,6 +27,7 @@ import {
   sendMedia,
   sendText,
   setAccountWake,
+  setDedicatedAssistant,
   setTyping,
   statusPayload,
 } from "./ilink.js";
@@ -219,6 +220,20 @@ const tools = {
     },
     handle: async ({ ilink_bot_id, url, key }) => ok(await setAccountWake(ilink_bot_id, url, key)),
   },
+  wechat_set_dedicated_assistant: {
+    description: "为已绑定微信账号登记专属 Grok Bot 助手 id/名称。每次扫码绑定成功后创建专属助手并调用，供入站按 ilink_bot_id 转交与卸载侧栏列表。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ilink_bot_id: { type: "string", description: "已绑定账号 bot id" },
+        assistant_id: { type: "string", description: "专属助手 id" },
+        assistant_name: { type: "string", description: "专属助手侧栏名称（如「微信1」）" },
+      },
+      required: ["ilink_bot_id", "assistant_name"],
+    },
+    handle: async ({ ilink_bot_id, assistant_id, assistant_name }) =>
+      ok(setDedicatedAssistant(ilink_bot_id, assistant_id, assistant_name)),
+  },
   wechat_stop_monitor: {
     description: "停止后台长轮询。",
     inputSchema: { type: "object", properties: {} },
@@ -249,7 +264,7 @@ const tools = {
     },
   },
   wechat_uninstall: {
-    description: "完整卸载微信渠道：停止 monitor、删除状态与插件目录、清理自启项；返回 platform_cleanup（卸载连接器、删除安装助手上的「微信入站唤醒」「微信监听保活」及残留副本）。",
+    description: "完整卸载微信渠道：停止 monitor、删除状态与插件目录、清理自启项；返回 platform_cleanup 与 dedicated_assistants_sidebar_delete（侧栏专属助手名称列表）。",
     inputSchema: { type: "object", properties: {} },
     handle: async () => ok(uninstallWechat()),
   },

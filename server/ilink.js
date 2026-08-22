@@ -112,6 +112,8 @@ function accountSummary(account) {
     ilink_user_id: account.ilinkUserId,
     logged_in: Boolean(account.token),
     has_wake: hasAccountWake(account),
+    dedicated_assistant_id: account.dedicatedAssistant?.id || "",
+    dedicated_assistant_name: account.dedicatedAssistant?.name || "",
   };
 }
 
@@ -175,7 +177,7 @@ export async function loginWait(timeoutMs = 120_000, qrcodeArg) {
         ilink_bot_id: account.ilinkBotId,
         ilink_user_id: account.ilinkUserId,
         accounts: listAccounts(loadState()).map(accountSummary),
-        hint: "绑定完成。后续扫码绑定无需再配 webhook。可选：为该号创建专属助手并按 ilink_bot_id 分流。",
+        hint: "绑定完成。为该号创建专属 Grok Bot 助手，调用 wechat_set_dedicated_assistant 登记 assistant_id 与 assistant_name。后续扫码绑定无需再配 webhook。",
       };
     }
     if (last.status === "binded_redirect" && last.bot_token) {
@@ -192,7 +194,7 @@ export async function loginWait(timeoutMs = 120_000, qrcodeArg) {
         ilink_bot_id: account.ilinkBotId,
         ilink_user_id: account.ilinkUserId,
         accounts: listAccounts(loadState()).map(accountSummary),
-        hint: "绑定完成。后续扫码绑定无需再配 webhook。可选：为该号创建专属助手并按 ilink_bot_id 分流。",
+        hint: "绑定完成。为该号创建专属 Grok Bot 助手，调用 wechat_set_dedicated_assistant 登记 assistant_id 与 assistant_name。后续扫码绑定无需再配 webhook。",
       };
     }
     if (last.status === "expired") {
@@ -569,4 +571,20 @@ export async function setAccountWake(ilink_bot_id, url, key) {
     probe,
     accounts: listAccounts(loadState()).map(accountSummary),
   };
+}
+
+export function setDedicatedAssistant(ilink_bot_id, assistant_id, assistant_name) {
+  if (!ilink_bot_id) throw new Error("ilink_bot_id 必填");
+  if (!assistant_name) throw new Error("assistant_name 必填");
+  updateState((s) => {
+    const hit = requireAccount(s, { ilink_bot_id });
+    hit.dedicatedAssistant = {
+      id: assistant_id || hit.dedicatedAssistant?.id || "",
+      name: assistant_name,
+    };
+    return s;
+  });
+  saveStateSecure(loadState());
+  const account = findAccount(loadState(), { ilink_bot_id });
+  return accountSummary(account);
 }
