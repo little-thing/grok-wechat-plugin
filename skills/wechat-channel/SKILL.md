@@ -51,7 +51,13 @@ stdio 用换行分隔 JSON（MCP 2025-11-25）。
 
 ## 卸载
 
-用户说「卸掉微信插件」时，安装助手**执行**下列全部步骤。
+在 Grok Bot 里发：
+
+```
+卸掉微信插件
+```
+
+安装助手**执行**下列全部步骤。
 
 ### 1. 本机清理
 
@@ -61,11 +67,11 @@ stdio 用换行分隔 JSON（MCP 2025-11-25）。
 - 删除 `/home/box/grok-wechat-plugin` 与 `GROK_WECHAT_HOME` / `/home/box/.grok-wechat`（含 `account.json`、`wake.json`、token、inbox、media、pid、log、`ensure-monitor.sh`）
 - 清理 crontab 与 shell 自启项
 
-返回 `dedicated_assistants_sidebar_delete`（绑定期间登记的专属助手名称）。用户若先从 Settings 卸载连接器，MCP 退出与 monitor 看门狗也会触发同等本机清理。
+返回 `dedicated_assistants_sidebar_delete`（绑定期间登记的专属助手名称）。
 
 ### 2. 平台清理（安装助手执行）
 
-1. 从 Grok Bot Settings **卸载** `grok-wechat` 连接器（若仍存在）。
+1. **卸载** `grok-wechat` 连接器。
 2. **删除**安装助手上 Routine「微信入站唤醒」与「微信监听保活」。
 3. **删除**其他助手上残留的同名 Routine。
 4. 根据 `dedicated_assistant_sidebar_names`，**告知用户**在侧栏右键 → 删除所列专属助手（如「微信1」「微信2」）。

@@ -52,12 +52,18 @@ After a task finishes, call `wechat_send`.
 
 See `skills/wechat-channel/SKILL.md` for install details.
 
-## Uninstall
+## One-line uninstall
 
-Tell Grok Bot to uninstall the WeChat plugin. The installing assistant will:
+Send this in Grok Bot:
+
+```
+Uninstall the WeChat plugin
+```
+
+The installing assistant will:
 
 1. Call `wechat_uninstall` to clean the machine and read `dedicated_assistants_sidebar_delete` for dedicated assistant names.
-2. Remove the `grok-wechat` connector from Settings if it still exists.
+2. Remove the `grok-wechat` connector.
 3. Delete Routine「微信入站唤醒」and「微信监听保活」on the installing assistant, and remove any leftover copies on other assistants.
 4. Tell the user to right-click → Delete the dedicated assistants listed in the uninstall response (e.g. 微信1, 微信2) in the sidebar.
 
