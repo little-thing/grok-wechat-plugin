@@ -283,13 +283,30 @@ export function loadFallbackWake() {
   return null;
 }
 
+export function saveGlobalWake(url, key) {
+  ensureHome();
+  const wakeFile = fallbackWakePath();
+  const tmp = `${wakeFile}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify({ url, key }, null, 2));
+  fs.renameSync(tmp, wakeFile);
+  try {
+    fs.chmodSync(wakeFile, 0o600);
+  } catch {
+    // ignore
+  }
+}
+
+export function hasGlobalWake() {
+  return Boolean(loadFallbackWake());
+}
+
 export function resolveWakeForAccount(account) {
   if (account?.wake?.url && account?.wake?.key) return account.wake;
   return loadFallbackWake();
 }
 
 export function hasAccountWake(account) {
-  return Boolean(account?.wake?.url && account?.wake?.key);
+  return hasGlobalWake() || Boolean(account?.wake?.url && account?.wake?.key);
 }
 
 export function saveStateSecure(next) {

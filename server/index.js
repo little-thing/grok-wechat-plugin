@@ -207,20 +207,17 @@ const tools = {
     handle: async () => ok(ensureMonitor()),
   },
   wechat_set_wake: {
-    description: "为指定已绑定微信账号保存专属 webhook（url + key）。由该号专属助手在自建 Routine「微信入站唤醒」后调用，传入本 Routine 的 url、key、ilink_bot_id，以及 assistant_id / assistant_name 供卸载时列出侧栏删除项。",
+    description: "保存全局入站 webhook（wake.json，权限 600），供当前及后续所有已绑定账号共用。ilink_bot_id 可选；传入时同时写入该账号并仍保留全局配置。",
     inputSchema: {
       type: "object",
       properties: {
-        ilink_bot_id: { type: "string", description: "要配置 webhook 的已绑定账号 bot id" },
-        url: { type: "string", description: "该助手 Routine「微信入站唤醒」的 webhook 地址" },
+        url: { type: "string", description: "安装助手 Routine「微信入站唤醒」的 webhook 地址" },
         key: { type: "string", description: "webhook 密钥" },
-        assistant_id: { type: "string", description: "专属助手 id（自绑时传入，写入 account.json）" },
-        assistant_name: { type: "string", description: "专属助手侧栏名称（自绑时传入，如「微信1」）" },
+        ilink_bot_id: { type: "string", description: "可选，同时写入该已绑定账号；省略则仅设置全局 wake" },
       },
-      required: ["ilink_bot_id", "url", "key"],
+      required: ["url", "key"],
     },
-    handle: async ({ ilink_bot_id, url, key, assistant_id, assistant_name }) =>
-      ok(await setAccountWake(ilink_bot_id, url, key, { assistant_id, assistant_name })),
+    handle: async ({ ilink_bot_id, url, key }) => ok(await setAccountWake(ilink_bot_id, url, key)),
   },
   wechat_stop_monitor: {
     description: "停止后台长轮询。",
@@ -252,7 +249,7 @@ const tools = {
     },
   },
   wechat_uninstall: {
-    description: "完整卸载微信渠道：停止 monitor、删除状态与插件目录、清理自启项；返回 platform_cleanup（连接器卸载、全助手 Routine 删除、侧栏专属助手名称列表）。",
+    description: "完整卸载微信渠道：停止 monitor、删除状态与插件目录、清理自启项；返回 platform_cleanup（卸载连接器、删除安装助手上的「微信入站唤醒」「微信监听保活」及残留副本）。",
     inputSchema: { type: "object", properties: {} },
     handle: async () => ok(uninstallWechat()),
   },

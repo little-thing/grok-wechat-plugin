@@ -16,19 +16,19 @@ Grok Bot 的微信 iLink 渠道。入站消息经 webhook 唤醒 agent。
 
 按对话一步走完即可，整段过程如下：
 
-![在 Grok Bot 里安装、确认渠道、扫码、专属助手自绑 webhook](docs/bind-flow.png)
+![在 Grok Bot 里安装、确认渠道、粘贴一次 webhook、扫码](docs/bind-flow.png)
 
 1. **确认添加渠道**  
    对话里会出现「加」按钮，点一下，把微信渠道接到 Grok Bot。
 
-2. **连接器与专属助手**  
-   安装助手加上共用微信连接器，并建一条共用 Routine **「微信监听保活」**（每 5 分钟调用 `wechat_start_monitor`）。每次扫码绑定成功后，创建该微信号的**专属助手**，把 `ilink_bot_id` 交给它；专属助手自建 Routine **「微信入站唤醒」**（Webhook）并调用 `wechat_set_wake` 完成自绑。
+2. **连接器与共用 Routine**  
+   安装助手加上微信连接器，并创建两条 Routine：**「微信入站唤醒」**（Webhook）与 **「微信监听保活」**（每 5 分钟 `wechat_start_monitor`）。webhook Routine 创建后平台不把 url/key 返回给 agent；用户从该 Routine 面板复制地址与密钥发来**一次**，安装助手 `wechat_set_wake` 写入全局 `wake.json`，当前及后续绑定账号共用。
 
 3. **扫码登录微信**  
-   安装助手 `wechat_login_start` 出码并展示二维码，随即 `wechat_login_wait` 轮询至 `logged_in=true`。绑定更多账号时重复出码与等待，为每个号各建专属助手并完成自绑。
+   `wechat_login_start` 出码 → 立即 `wechat_login_wait` 至 `logged_in=true`。绑定更多账号时重复出码与等待，**无需**再粘贴 webhook。
 
 4. **绑定完成**  
-   `wechat_status` 显示该账号 `has_wake=true`。该号私信只唤醒其专属助手。
+   `wechat_status` 显示 `global_wake_configured=true`。可选为各号建专属助手按 `ilink_bot_id` 分流，专属助手不再建入站 Routine。
 
 对方给你发一条微信私信，就能在微信里收到回复。
 
@@ -40,11 +40,11 @@ Grok Bot 的微信 iLink 渠道。入站消息经 webhook 唤醒 agent。
 
 ## 多账号
 
-一个连接器可绑定多个微信个人号。每人独立扫码、各配专属助手与 webhook（`wechat_set_wake`）；A 号私信只唤醒 A 的助手，B 不受影响。`wechat_status` 查看全部账号及 `has_wake`。
+一个连接器可绑定多个微信个人号。全局 webhook 覆盖全部账号；每人独立扫码，后续绑定不再粘贴。`wechat_status` 查看 `global_wake_configured` 与各账号。
 
 ## 链路
 
-微信私信 → monitor 收件箱 → POST 该号专属 webhook → 专属助手醒来 → `wechat_send`
+微信私信 → monitor 收件箱 → POST 共享 webhook → 安装助手醒来 → `wechat_inbox` → 按 `ilink_bot_id` 处理 → `wechat_send`
 
 任务做完立刻 `wechat_send`。
 
@@ -56,9 +56,8 @@ Grok Bot 的微信 iLink 渠道。入站消息经 webhook 唤醒 agent。
 
 跟 Grok Bot 说「卸掉微信插件」。安装助手会：
 
-1. 调用 `wechat_uninstall` 清理本机（monitor、插件目录、`/home/box/.grok-wechat`），并读取 `dedicated_assistants_sidebar_delete` 中的专属助手名称。
+1. 调用 `wechat_uninstall` 清理本机（monitor、插件目录、`/home/box/.grok-wechat`）。
 2. 从 Settings 卸载 `grok-wechat` 连接器（若仍存在）。
-3. 删除**每个**助手上的 Routine「微信入站唤醒」与「微信监听保活」（自己的直接删，其他的发消息要求删除或在可访问范围内删除）。
-4. 告知用户在侧栏右键删除返回列表中的专属助手（如「微信1」「微信2」）；助手本身只能由用户在侧栏删除。
+3. 删除安装助手上 Routine「微信入站唤醒」与「微信监听保活」，并删除其他助手上残留的同名 Routine。
 
-完成后重装需重新扫码，`wechat_status` 为零账号。
+完成后重装需重新粘贴 webhook 并扫码，`wechat_status` 为零账号。

@@ -16,19 +16,19 @@ Install this WeChat plugin https://github.com/little-thing/grok-wechat-plugin
 
 Follow the conversation. The full flow looks like this:
 
-![Install, confirm the channel, scan the QR code, dedicated assistant self-binds webhook](docs/bind-flow.png)
+![Install, confirm the channel, paste webhook once, scan QR](docs/bind-flow.png)
 
 1. **Confirm the channel**  
    Tap **加** in the chat to attach the WeChat channel to Grok Bot.
 
-2. **Connector and dedicated assistants**  
-   The installing assistant adds the shared WeChat connector and one shared Routine **「微信监听保活」** (every 5 minutes, `wechat_start_monitor`). After each QR bind, it creates a **dedicated assistant** for that WeChat user, passes `ilink_bot_id` to it, and that assistant creates Routine **「微信入站唤醒」** (webhook) and calls `wechat_set_wake` with its own Routine URL and key.
+2. **Connector and shared routines**  
+   The installing assistant adds the WeChat connector and creates two routines: **「微信入站唤醒」** (webhook) and **「微信监听保活」** (every 5 minutes, `wechat_start_monitor`). Creating the webhook routine does not return url/key to the agent; the user copies them once from that routine's panel and sends them. The assistant calls `wechat_set_wake` to write global `wake.json` for all current and future bound accounts.
 
 3. **Scan to log in**  
-   The installing assistant calls `wechat_login_start` to show a QR code, then immediately calls `wechat_login_wait` in a loop until `logged_in=true`. For another account, repeat start and wait, then create another dedicated assistant and complete self-bind.
+   `wechat_login_start` shows a QR code, then immediately `wechat_login_wait` until `logged_in=true`. Bind more accounts by repeating start and wait — no second webhook paste.
 
 4. **Binding complete**  
-   `wechat_status` shows `has_wake=true` for that account. DMs to that WeChat number wake only its dedicated assistant.
+   `wechat_status` shows `global_wake_configured=true`. Optional dedicated assistants per number can hand off by `ilink_bot_id`; they do not create inbound routines.
 
 When someone DMs you on WeChat, the bot can reply there.
 
@@ -40,11 +40,11 @@ Talk in WeChat as usual:
 
 ## Multiple accounts
 
-One connector can bind multiple WeChat personal accounts. Each bind gets its own dedicated assistant and webhook via `wechat_set_wake`. DMs to account A wake only assistant A; B is unchanged. `wechat_status` lists all accounts and `has_wake`.
+One connector binds multiple WeChat personal accounts. One global webhook covers all of them; each new bind only needs a QR scan. `wechat_status` shows `global_wake_configured` and per-account status.
 
 ## Flow
 
-WeChat DM → monitor inbox → POST that account's webhook → dedicated assistant wakes → `wechat_send`
+WeChat DM → monitor inbox → POST shared webhook → installing assistant wakes → `wechat_inbox` → handle by `ilink_bot_id` → `wechat_send`
 
 After a task finishes, call `wechat_send`.
 
@@ -56,9 +56,8 @@ See `skills/wechat-channel/SKILL.md` for install details.
 
 Tell Grok Bot to uninstall the WeChat plugin. The installing assistant will:
 
-1. Call `wechat_uninstall` to clean the machine (monitor, plugin dir, `/home/box/.grok-wechat`) and read `dedicated_assistants_sidebar_delete` for dedicated assistant names.
+1. Call `wechat_uninstall` to clean the machine (monitor, plugin dir, `/home/box/.grok-wechat`).
 2. Remove the `grok-wechat` connector from Settings if it still exists.
-3. Delete Routine「微信入站唤醒」and「微信监听保活」on **every** assistant (delete its own; message others or remove those two routines wherever accessible).
-4. Tell the user to right-click → Delete the dedicated assistants listed in the uninstall response (e.g. 微信1, 微信2) in the sidebar; assistants can only be removed by the user there.
+3. Delete Routine「微信入站唤醒」and「微信监听保活」on the installing assistant, and remove any leftover copies on other assistants.
 
-After a clean uninstall, reinstall requires a fresh QR scan and `wechat_status` shows zero accounts.
+After a clean uninstall, reinstall requires a fresh webhook paste and QR scan; `wechat_status` shows zero accounts.
