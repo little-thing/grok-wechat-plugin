@@ -25,7 +25,7 @@ Follow the conversation. The full flow looks like this:
    The assistant adds the shared WeChat connector. After each QR bind, it creates a **dedicated assistant** for that WeChat user, adds Routine **「微信入站唤醒」** (webhook) on that assistant, and calls `wechat_set_wake` with that account's `ilink_bot_id`. One shared Routine **「微信监听保活」** (every 5 minutes, `wechat_start_monitor`) covers all accounts.
 
 3. **Scan to log in**  
-   Scan the QR code in the chat with WeChat on your phone. To bind another account, request a new QR code, create another dedicated assistant, and `wechat_set_wake` for that bind.
+   The assistant calls `wechat_login_start` to show a QR code, then immediately calls `wechat_login_wait` in a loop until the bind succeeds. For another account, repeat start and wait, then create another dedicated assistant and `wechat_set_wake`.
 
 4. **Configure webhook**  
    Copy the **webhook URL** and **secret** from the dedicated assistant's Routine「微信入站唤醒」, then call `wechat_set_wake` with that account's `ilink_bot_id`. After the probe succeeds, DMs to that WeChat number wake only that assistant.

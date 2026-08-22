@@ -25,7 +25,7 @@ Grok Bot 的微信 iLink 渠道。入站消息经 webhook 唤醒 agent。
    助手会加上微信连接器（所有助手共用）。每次扫码绑定成功后，为该微信用户创建**专属助手**，在其下建 Routine **「微信入站唤醒」**（Webhook），并用 `wechat_set_wake` 绑定该号的 webhook。另建一条共用 Routine **「微信监听保活」**（每 5 分钟调用 `wechat_start_monitor`）。
 
 3. **扫码登录微信**  
-   对话里会出一张二维码，用手机微信扫码确认绑定。需要绑定更多微信账号时，再次取码扫码，为每个号各建专属助手并 `wechat_set_wake`。
+   助手 `wechat_login_start` 出码并展示二维码，随即 `wechat_login_wait` 轮询至绑定成功。绑定更多账号时重复出码与等待，为每个号各建专属助手并 `wechat_set_wake`。
 
 4. **配置 webhook**  
    在专属助手的 Routine「微信入站唤醒」里复制 **webhook 地址** 和 **密钥**，调用 `wechat_set_wake`（传入该号的 `ilink_bot_id`）。探测通过后，该号的私信只唤醒该专属助手。

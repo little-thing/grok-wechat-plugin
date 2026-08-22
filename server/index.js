@@ -81,12 +81,12 @@ const accountRefSchema = {
 
 const tools = {
   wechat_login_start: {
-    description: "获取新的微信 iLink 登录二维码。已有绑定账号会保持在线，可继续扫码绑定更多账号。",
+    description: "获取并向用户展示微信 iLink 登录二维码。出码后下一步立即调用 wechat_login_wait，轮询至 logged_in=true。",
     inputSchema: { type: "object", properties: {} },
     handle: async () => ok(await loginStart()),
   },
   wechat_login_wait: {
-    description: "等待用户扫码确认。可重复调用直到 logged_in=true。",
+    description: "轮询等待扫码结果。wechat_login_start 出码后立即调用；logged_in=false 且未过期时重复调用；expired=true 时重新 wechat_login_start 后再 wait。",
     inputSchema: {
       type: "object",
       properties: {

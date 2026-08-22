@@ -142,7 +142,8 @@ export async function loginStart() {
     qrcode,
     image: img,
     existing_accounts: listAccounts(state).map(accountSummary),
-    hint: "用手机微信扫描该二维码并确认登录，然后调用 wechat_login_wait。已有账号会保持在线。",
+    next: "wechat_login_wait",
+    hint: "向用户展示二维码后，立即调用 wechat_login_wait，轮询至 logged_in=true。",
   };
 }
 
@@ -197,10 +198,10 @@ export async function loginWait(timeoutMs = 120_000, qrcodeArg) {
         s.pendingQrs = s.pendingQrs.filter((p) => p.qrcode !== qrcode);
         return s;
       });
-      return { logged_in: false, expired: true, hint: "二维码已过期，重新调用 wechat_login_start" };
+      return { logged_in: false, expired: true, hint: "调用 wechat_login_start 取新码，出码后立即 wechat_login_wait" };
     }
   }
-  return { logged_in: false, status: last.status || "wait", hint: "继续调用 wechat_login_wait，或重新取码" };
+  return { logged_in: false, status: last.status || "wait", hint: "立即再次调用 wechat_login_wait" };
 }
 
 export async function notifyStart(account) {

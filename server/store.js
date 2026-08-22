@@ -128,7 +128,7 @@ export function requireAccount(state, { ilink_bot_id, ilink_user_id } = {}) {
     return account;
   }
   const accounts = listAccounts(state);
-  if (!accounts.length) throw new Error("未登录。先 wechat_login_start，扫码后再 wechat_login_wait");
+  if (!accounts.length) throw new Error("未登录。先 wechat_login_start 出码，立即 wechat_login_wait 至 logged_in=true");
   if (accounts.length === 1) return accounts[0];
   throw new Error("已绑定多个微信账号，请指定 ilink_bot_id");
 }
