@@ -22,7 +22,7 @@ description: 用户要在 Grok Bot 里安装、登录、收发或卸载微信 iL
 
 - 连接器：`grok-wechat`，入口 `server/index.js`。登录后或连接器启动时会拉起 monitor。
 - Routine `微信入站唤醒`：webhook。入站后 `wechat_inbox` → typing / `wechat_send`。没有新消息就安静。只回微信。
-- Routine `微信监听保活`：每 5 分钟只调用 `wechat_start_monitor`，不判断、不说话。
+- Routine `微信监听保活`：每 5 分钟。提示词：`只调用 wechat_start_monitor，确保微信入站监听在跑。除此之外什么都不要做。`
 - 用户贴来的 hook URL 和密钥写入状态目录的 `wake.json`（权限 600），探测 Bearer。密钥只写文件。
 - `wechat_login_start` 出码 → 用户扫 → `wechat_login_wait`。对方先发一条才有 context_token。
 
@@ -30,11 +30,11 @@ stdio 用换行分隔 JSON（MCP 2025-11-25）。
 
 ## 入站之后
 
-`wechat_inbox`。有消息则在微信里回复。
+`wechat_inbox`。有消息则在微信里回复。语音按转写文本处理，用 `wechat_send` 回文字。
 
 ## 协议
 
-只处理私信。回复依赖 context_token。纯文本。
+只处理私信。回复依赖 context_token。文字和语音转写都当文本，用 `wechat_send` 回文字。
 
 ## 卸载
 
