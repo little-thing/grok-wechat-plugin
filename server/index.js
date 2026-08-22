@@ -7,11 +7,12 @@ import {
   clearPid,
   drainInbox,
   isAllowed,
+  listAccounts,
   loadState,
   monitorRunning,
   homeDir,
   paths,
-  peekInboxCount,
+  removeAccount,
   updateState,
   writePid,
 } from "./store.js";
@@ -25,6 +26,7 @@ import {
   sendMedia,
   sendText,
   setTyping,
+  statusPayload,
 } from "./ilink.js";
 
 const self = fileURLToPath(import.meta.url);
@@ -57,8 +59,8 @@ async function sleep(ms) {
 function ensureMonitor() {
   const existing = monitorRunning();
   if (existing) return { already_running: true, pid: existing };
-  const s = loadState();
-  if (!s.token) return { started: false, reason: "not_logged_in" };
+  const accounts = listAccounts();
+  if (!accounts.length) return { started: false, reason: "not_logged_in" };
   const child = spawn(process.execPath, [self, "--monitor"], {
     detached: true,
     stdio: "ignore",
@@ -66,12 +68,17 @@ function ensureMonitor() {
   });
   child.unref();
   writePid(child.pid);
-  return { started: true, pid: child.pid };
+  return { started: true, pid: child.pid, account_count: accounts.length };
 }
+
+const accountRefSchema = {
+  ilink_bot_id: { type: "string", description: "指定要操作的已绑定微信账号 bot id" },
+  ilink_user_id: { type: "string", description: "指定要操作的已绑定微信 user id" },
+};
 
 const tools = {
   wechat_login_start: {
-    description: "获取微信 iLink 登录二维码。把 image 展示给用户扫码，然后调用 wechat_login_wait。",
+    description: "获取新的微信 iLink 登录二维码。已有绑定账号会保持在线，可继续扫码绑定更多账号。",
     inputSchema: { type: "object", properties: {} },
     handle: async () => ok(await loginStart()),
   },
@@ -79,54 +86,73 @@ const tools = {
     description: "等待用户扫码确认。可重复调用直到 logged_in=true。",
     inputSchema: {
       type: "object",
-      properties: { timeout_ms: { type: "number", description: "本次等待毫秒，默认 120000" } },
+      properties: {
+        timeout_ms: { type: "number", description: "本次等待毫秒，默认 120000" },
+        qrcode: { type: "string", description: "可选，指定等待的二维码 id；默认等待最近一次 wechat_login_start 返回的码" },
+      },
     },
-    handle: async ({ timeout_ms }) => {
-      const r = await loginWait(timeout_ms || 120_000);
+    handle: async ({ timeout_ms, qrcode }) => {
+      const r = await loginWait(timeout_ms || 120_000, qrcode);
       if (r && r.logged_in) ensureMonitor();
       return ok(r);
     },
   },
   wechat_status: {
-    description: "查看登录态、最近会话、allowlist、monitor 是否在跑。",
+    description: "查看所有已绑定账号、allowlist、monitor 是否在跑。",
     inputSchema: { type: "object", properties: {} },
     handle: async () => {
-      const s = loadState();
-      return ok({
-        logged_in: Boolean(s.token),
-        ilink_bot_id: s.ilinkBotId,
-        ilink_user_id: s.ilinkUserId,
-        last_from_user_id: s.lastFromUserId,
-        peers: Object.keys(s.contextTokens || {}),
-        allow_from: s.allowFrom,
-        monitor_pid: monitorRunning(),
-        inbox: peekInboxCount(),
-      });
+      const payload = statusPayload();
+      payload.monitor_pid = monitorRunning();
+      return ok(payload);
     },
   },
   wechat_logout: {
-    description: "清除本地 bot_token 与会话状态。",
-    inputSchema: { type: "object", properties: {} },
-    handle: async () => {
+    description: "登出微信账号。默认登出全部已绑定账号；可指定 ilink_bot_id 只登出一个。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...accountRefSchema,
+        all: { type: "boolean", description: "true 时登出全部账号（默认行为）" },
+      },
+    },
+    handle: async ({ ilink_bot_id, ilink_user_id, all }) => {
       const pid = monitorRunning();
-      if (pid) {
+      const state = loadState();
+      const logoutAll = all !== false && !ilink_bot_id && !ilink_user_id;
+      if (logoutAll) {
+        if (pid) {
+          try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ }
+          clearPid();
+        }
+        updateState((s) => {
+          s.accounts = [];
+          s.pendingQrs = [];
+          return s;
+        });
+        return ok({ logged_out: true, scope: "all" });
+      }
+      const before = listAccounts(state).length;
+      updateState((s) => removeAccount(s, { ilink_bot_id, ilink_user_id }));
+      const after = listAccounts(loadState()).length;
+      if (after === before) {
+        throw new Error("未找到要登出的账号");
+      }
+      if (!after && pid) {
         try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ }
         clearPid();
+      } else if (after && !monitorRunning()) {
+        ensureMonitor();
       }
-      updateState((s) => {
-        s.token = "";
-        s.getUpdatesBuf = "";
-        s.contextTokens = {};
-        s.typingTickets = {};
-        s.pendingQr = null;
-        s.lastFromUserId = "";
-        return s;
+      return ok({
+        logged_out: true,
+        scope: "one",
+        ilink_bot_id: ilink_bot_id || undefined,
+        remaining_accounts: after,
       });
-      return ok({ logged_out: true });
     },
   },
   wechat_inbox: {
-    description: "立即取出 monitor 缓存的入站消息（取出后清空）。",
+    description: "立即取出 monitor 缓存的入站消息（取出后清空）。每条消息带 ilink_bot_id，回复时用同一账号。",
     inputSchema: { type: "object", properties: {} },
     handle: async () => ok({ messages: drainInbox(), from_monitor: true }),
   },
@@ -136,11 +162,12 @@ const tools = {
       type: "object",
       properties: {
         text: { type: "string" },
-        to_user_id: { type: "string", description: "默认最近一个发来消息的用户" },
+        to_user_id: { type: "string", description: "微信对端 user id" },
+        ilink_bot_id: accountRefSchema.ilink_bot_id,
       },
-      required: ["text"],
+      required: ["text", "to_user_id"],
     },
-    handle: async ({ text, to_user_id }) => ok(await sendText(to_user_id, text)),
+    handle: async ({ text, to_user_id, ilink_bot_id }) => ok(await sendText(to_user_id, text, ilink_bot_id)),
   },
   wechat_send_media: {
     description: "发送图片/视频/文件。路径是 Grok Bot 电脑上的本地文件。",
@@ -150,11 +177,13 @@ const tools = {
         path: { type: "string" },
         kind: { type: "string", enum: ["image", "video", "file"] },
         to_user_id: { type: "string" },
+        ilink_bot_id: accountRefSchema.ilink_bot_id,
         caption: { type: "string" },
       },
-      required: ["path", "kind"],
+      required: ["path", "kind", "to_user_id"],
     },
-    handle: async ({ path, kind, to_user_id, caption }) => ok(await sendMedia(to_user_id, path, kind, caption)),
+    handle: async ({ path, kind, to_user_id, ilink_bot_id, caption }) =>
+      ok(await sendMedia(to_user_id, path, kind, caption, ilink_bot_id)),
   },
   wechat_typing: {
     description: "发送或取消「正在输入」。回复前先打开，发完后关闭。",
@@ -163,13 +192,14 @@ const tools = {
       properties: {
         on: { type: "boolean" },
         to_user_id: { type: "string" },
+        ilink_bot_id: accountRefSchema.ilink_bot_id,
       },
-      required: ["on"],
+      required: ["on", "to_user_id"],
     },
-    handle: async ({ on, to_user_id }) => ok(await setTyping(to_user_id, on)),
+    handle: async ({ on, to_user_id, ilink_bot_id }) => ok(await setTyping(to_user_id, on, ilink_bot_id)),
   },
   wechat_start_monitor: {
-    description: "在本机后台启动长轮询，把入站消息写入收件箱并 POST webhook 唤醒 agent。已在跑则直接返回。",
+    description: "在本机后台启动长轮询，为每个已绑定账号拉取入站消息并 POST webhook 唤醒 agent。已在跑则直接返回。",
     inputSchema: { type: "object", properties: {} },
     handle: async () => ok(ensureMonitor()),
   },
@@ -221,7 +251,6 @@ async function dispatch(name, args) {
 }
 
 function writeMessage(msg) {
-  // MCP 2025-11-25 stdio: one JSON-RPC object per line, no Content-Length.
   const json = JSON.stringify(msg);
   fs.writeSync(1, json + "\n");
   try {
@@ -334,6 +363,7 @@ async function wakeAgent(messages, log) {
         source: "grok-wechat",
         count: messages.length,
         from_user_ids: messages.map((m) => m.from_user_id),
+        ilink_bot_ids: [...new Set(messages.map((m) => m.ilink_bot_id).filter(Boolean))],
       }),
     });
     const text = await res.text();
@@ -343,16 +373,29 @@ async function wakeAgent(messages, log) {
   }
 }
 
+async function pollAccount(account, log) {
+  const raw = await getUpdates(account);
+  if (raw.session_expired) {
+    log(`session expired bot=${account.ilinkBotId}`);
+    return { messages: [], expired: true };
+  }
+  const collected = await collectInbound(raw.msgs || [], account);
+  const state = loadState();
+  const allowed = collected.messages.filter((m) => isAllowed(state, m.from_user_id));
+  return { messages: allowed, expired: false };
+}
+
 async function runMonitor() {
-  loadState();
   const logStream = fs.createWriteStream(paths().log, { flags: "a" });
   const log = (line) => {
     logStream.write(`${new Date().toISOString()} ${line}\n`);
   };
   log("monitor start");
-  await notifyStart();
+  const accounts = listAccounts();
+  await Promise.all(accounts.map((a) => notifyStart(a)));
   const onExit = async () => {
-    await notifyStop();
+    const current = listAccounts();
+    await Promise.all(current.map((a) => notifyStop(a)));
     clearPid();
     process.exit(0);
   };
@@ -361,18 +404,22 @@ async function runMonitor() {
   let failures = 0;
   while (true) {
     try {
-      const raw = await getUpdates();
-      failures = 0;
-      if (raw.session_expired) {
-        await sleep(60_000);
-        continue;
+      const accountsNow = listAccounts();
+      if (!accountsNow.length) {
+        log("no accounts, stopping");
+        clearPid();
+        process.exit(0);
       }
-      const collected = await collectInbound(raw.msgs || []);
-      const allowed = collected.messages.filter((m) => isAllowed(loadState(), m.from_user_id));
-      appendInbox(allowed);
-      if (allowed.length) {
-        log(`inbox +${allowed.length}`);
-        await wakeAgent(allowed, log);
+      const results = await Promise.all(accountsNow.map((account) => pollAccount(account, log)));
+      failures = 0;
+      const batch = results.flatMap((r) => r.messages);
+      if (results.some((r) => r.expired)) {
+        await sleep(60_000);
+      }
+      if (batch.length) {
+        appendInbox(batch);
+        log(`inbox +${batch.length}`);
+        await wakeAgent(batch, log);
       }
     } catch (err) {
       failures += 1;

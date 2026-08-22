@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 const DEFAULT_BASE = "https://ilinkai.weixin.qq.com";
+const MAX_LOCAL_TOKENS = 10;
 
 export function homeDir() {
   const raw = process.env.GROK_WECHAT_HOME?.trim();
@@ -22,7 +23,7 @@ export function paths() {
   };
 }
 
-export function emptyState() {
+export function emptyAccount() {
   return {
     token: "",
     baseUrl: DEFAULT_BASE,
@@ -31,9 +32,14 @@ export function emptyState() {
     getUpdatesBuf: "",
     contextTokens: {},
     typingTickets: {},
+  };
+}
+
+export function emptyState() {
+  return {
+    accounts: [],
+    pendingQrs: [],
     allowFrom: [],
-    pendingQr: null,
-    lastFromUserId: "",
   };
 }
 
@@ -43,12 +49,35 @@ function ensureHome() {
   fs.mkdirSync(media, { recursive: true });
 }
 
+function migrateLegacyState(raw) {
+  if (Array.isArray(raw.accounts)) return raw;
+  const state = emptyState();
+  if (raw.token) {
+    state.accounts.push({
+      ...emptyAccount(),
+      token: raw.token,
+      baseUrl: raw.baseUrl || DEFAULT_BASE,
+      ilinkBotId: raw.ilinkBotId || "",
+      ilinkUserId: raw.ilinkUserId || "",
+      getUpdatesBuf: raw.getUpdatesBuf || "",
+      contextTokens: raw.contextTokens || {},
+      typingTickets: raw.typingTickets || {},
+    });
+  }
+  if (raw.pendingQr?.qrcode) {
+    state.pendingQrs.push(raw.pendingQr);
+  }
+  state.allowFrom = raw.allowFrom || [];
+  return state;
+}
+
 export function loadState() {
   ensureHome();
   const { state } = paths();
   if (!fs.existsSync(state)) return emptyState();
   try {
-    return { ...emptyState(), ...JSON.parse(fs.readFileSync(state, "utf8")) };
+    const raw = JSON.parse(fs.readFileSync(state, "utf8"));
+    return { ...emptyState(), ...migrateLegacyState(raw) };
   } catch {
     return emptyState();
   }
@@ -69,16 +98,95 @@ export function updateState(mutator) {
   return next;
 }
 
-export function rememberContext(state, userId, contextToken) {
-  if (!userId || !contextToken) return state;
-  state.contextTokens[userId] = { token: contextToken, at: Date.now() };
-  state.lastFromUserId = userId;
+export function listAccounts(state = loadState()) {
+  return state.accounts.filter((a) => a.token);
+}
+
+export function findAccount(state, { ilink_bot_id, ilink_user_id, token } = {}) {
+  if (ilink_bot_id) {
+    const hit = state.accounts.find((a) => a.ilinkBotId === ilink_bot_id);
+    if (hit) return hit;
+  }
+  if (ilink_user_id) {
+    const hit = state.accounts.find((a) => a.ilinkUserId === ilink_user_id);
+    if (hit) return hit;
+  }
+  if (token) {
+    const hit = state.accounts.find((a) => a.token === token);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+export function requireAccount(state, { ilink_bot_id, ilink_user_id } = {}) {
+  if (ilink_bot_id || ilink_user_id) {
+    const account = findAccount(state, { ilink_bot_id, ilink_user_id });
+    if (!account?.token) {
+      throw new Error(`未找到账号 ilink_bot_id=${ilink_bot_id || ""} ilink_user_id=${ilink_user_id || ""}`);
+    }
+    return account;
+  }
+  const accounts = listAccounts(state);
+  if (!accounts.length) throw new Error("未登录。先 wechat_login_start，扫码后再 wechat_login_wait");
+  if (accounts.length === 1) return accounts[0];
+  throw new Error("已绑定多个微信账号，请指定 ilink_bot_id");
+}
+
+export function localTokenList(state = loadState()) {
+  return listAccounts(state)
+    .map((a) => a.token)
+    .slice(0, MAX_LOCAL_TOKENS);
+}
+
+export function upsertAccount(state, account) {
+  const idx = state.accounts.findIndex((a) =>
+  (account.ilinkBotId && a.ilinkBotId === account.ilinkBotId)
+  || (account.token && a.token === account.token));
+  if (idx >= 0) {
+    state.accounts[idx] = { ...state.accounts[idx], ...account };
+    const [updated] = state.accounts.splice(idx, 1);
+    state.accounts.unshift(updated);
+  } else {
+    state.accounts.unshift(account);
+  }
   return state;
 }
 
-export function contextFor(state, userId) {
-  const entry = state.contextTokens[userId];
+export function removeAccount(state, { ilink_bot_id, ilink_user_id } = {}) {
+  state.accounts = state.accounts.filter((a) => {
+    if (ilink_bot_id && a.ilinkBotId === ilink_bot_id) return false;
+    if (ilink_user_id && a.ilinkUserId === ilink_user_id) return false;
+    return true;
+  });
+  return state;
+}
+
+export function rememberContext(state, account, userId, contextToken) {
+  if (!account || !userId || !contextToken) return state;
+  account.contextTokens[userId] = { token: contextToken, at: Date.now() };
+  return state;
+}
+
+export function contextFor(account, userId) {
+  const entry = account?.contextTokens?.[userId];
   return entry?.token || "";
+}
+
+export function accountsWithContext(state, userId) {
+  return listAccounts(state).filter((a) => contextFor(a, userId));
+}
+
+export function resolveAccountForPeer(state, { to_user_id, ilink_bot_id } = {}) {
+  if (ilink_bot_id) return requireAccount(state, { ilink_bot_id });
+  if (!to_user_id) throw new Error("没有目标用户。传入 to_user_id，或等对方先发一条微信");
+  const matches = accountsWithContext(state, to_user_id);
+  if (!matches.length) {
+    throw new Error("还没有该用户的 context_token。对方需要先从微信给你发一条消息，会话通道才会建立");
+  }
+  if (matches.length > 1) {
+    throw new Error(`多个账号都能回复 ${to_user_id}，请指定 ilink_bot_id`);
+  }
+  return matches[0];
 }
 
 export function isAllowed(state, userId) {

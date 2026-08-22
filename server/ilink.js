@@ -1,7 +1,20 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { contextFor, loadState, paths, rememberContext, updateState } from "./store.js";
+import {
+  contextFor,
+  emptyAccount,
+  findAccount,
+  listAccounts,
+  loadState,
+  localTokenList,
+  paths,
+  peekInboxCount,
+  rememberContext,
+  resolveAccountForPeer,
+  updateState,
+  upsertAccount,
+} from "./store.js";
 
 const CHANNEL_VERSION = "1.0.0";
 const BOT_AGENT = "Grokbot/1.0.0";
@@ -88,90 +101,123 @@ export async function apiPost(baseUrl, endpoint, body, token, timeoutMs = API_TI
   return JSON.parse(text);
 }
 
+function accountSummary(account) {
+  return {
+    ilink_bot_id: account.ilinkBotId,
+    ilink_user_id: account.ilinkUserId,
+    logged_in: Boolean(account.token),
+  };
+}
+
+function applyLoginConfirm(state, last) {
+  const account = {
+    ...emptyAccount(),
+    token: last.bot_token,
+    ilinkBotId: last.ilink_bot_id || "",
+    ilinkUserId: last.ilink_user_id || "",
+    baseUrl: last.baseurl || state.accounts[0]?.baseUrl || emptyAccount().baseUrl,
+  };
+  upsertAccount(state, account);
+  return account;
+}
+
 export async function loginStart() {
   const state = loadState();
-  // POST so base_info.bot_agent is on the wire; GET defaults to OpenClaw/ClawBot branding.
-  const data = await apiPost(state.baseUrl, "ilink/bot/get_bot_qrcode?bot_type=3", {
-    local_token_list: [],
+  const baseUrl = state.accounts[0]?.baseUrl || emptyAccount().baseUrl;
+  const data = await apiPost(baseUrl, "ilink/bot/get_bot_qrcode?bot_type=3", {
+    local_token_list: localTokenList(state),
   });
   const qrcode = data.qrcode;
   const img = data.qrcode_img_content || data.url || "";
   if (!qrcode) throw new Error(`获取二维码失败: ${JSON.stringify(data)}`);
   updateState((s) => {
-    s.pendingQr = { qrcode, img, at: Date.now() };
+    s.pendingQrs.push({ qrcode, img, at: Date.now() });
     return s;
   });
-  return { qrcode, image: img, hint: "用手机微信扫描该二维码并确认登录，然后调用 wechat_login_wait" };
+  return {
+    qrcode,
+    image: img,
+    existing_accounts: listAccounts(state).map(accountSummary),
+    hint: "用手机微信扫描该二维码并确认登录，然后调用 wechat_login_wait。已有账号会保持在线。",
+  };
 }
 
-export async function loginWait(timeoutMs = 120_000) {
+export async function loginWait(timeoutMs = 120_000, qrcodeArg) {
   const state = loadState();
-  const qrcode = state.pendingQr?.qrcode;
+  const qrcode = qrcodeArg || state.pendingQrs.at(-1)?.qrcode;
   if (!qrcode) throw new Error("没有进行中的登录，先调用 wechat_login_start");
+  const baseUrl = state.accounts[0]?.baseUrl || emptyAccount().baseUrl;
   const deadline = Date.now() + timeoutMs;
   let last = { status: "wait" };
   while (Date.now() < deadline) {
     last = await apiGet(
-      state.baseUrl,
+      baseUrl,
       `ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(qrcode)}`,
       LONG_POLL_MS + 5_000,
     );
     if (last.status === "confirmed" && last.bot_token) {
+      let account;
       updateState((s) => {
-        s.token = last.bot_token;
-        s.ilinkBotId = last.ilink_bot_id || "";
-        s.ilinkUserId = last.ilink_user_id || "";
-        if (last.baseurl) s.baseUrl = last.baseurl;
-        s.pendingQr = null;
+        s.pendingQrs = s.pendingQrs.filter((p) => p.qrcode !== qrcode);
+        account = applyLoginConfirm(s, last);
         return s;
       });
       return {
         logged_in: true,
-        ilink_bot_id: last.ilink_bot_id || "",
-        ilink_user_id: last.ilink_user_id || "",
+        ...accountSummary(account),
+        accounts: listAccounts(loadState()).map(accountSummary),
+      };
+    }
+    if (last.status === "binded_redirect" && last.bot_token) {
+      let account;
+      updateState((s) => {
+        s.pendingQrs = s.pendingQrs.filter((p) => p.qrcode !== qrcode);
+        account = applyLoginConfirm(s, last);
+        return s;
+      });
+      return {
+        logged_in: true,
+        redirected: true,
+        ...accountSummary(account),
+        accounts: listAccounts(loadState()).map(accountSummary),
       };
     }
     if (last.status === "expired") {
+      updateState((s) => {
+        s.pendingQrs = s.pendingQrs.filter((p) => p.qrcode !== qrcode);
+        return s;
+      });
       return { logged_in: false, expired: true, hint: "二维码已过期，重新调用 wechat_login_start" };
     }
   }
   return { logged_in: false, status: last.status || "wait", hint: "继续调用 wechat_login_wait，或重新取码" };
 }
 
-function requireAccount() {
-  const state = loadState();
-  if (!state.token) throw new Error("未登录。先 wechat_login_start，扫码后再 wechat_login_wait");
-  return state;
-}
-
-export async function notifyStart() {
-  const state = requireAccount();
+export async function notifyStart(account) {
   try {
-    await apiPost(state.baseUrl, "ilink/bot/msg/notifystart", {}, state.token, 10_000);
+    await apiPost(account.baseUrl, "ilink/bot/msg/notifystart", {}, account.token, 10_000);
   } catch {
     // 部分环境未开放该接口
   }
 }
 
-export async function notifyStop() {
-  const state = loadState();
-  if (!state.token) return;
+export async function notifyStop(account) {
+  if (!account?.token) return;
   try {
-    await apiPost(state.baseUrl, "ilink/bot/msg/notifystop", {}, state.token, 10_000);
+    await apiPost(account.baseUrl, "ilink/bot/msg/notifystop", {}, account.token, 10_000);
   } catch {
     // ignore
   }
 }
 
-export async function getUpdates() {
-  const state = requireAccount();
+export async function getUpdates(account) {
   let data;
   try {
     data = await apiPost(
-      state.baseUrl,
+      account.baseUrl,
       "ilink/bot/getupdates",
-      { get_updates_buf: state.getUpdatesBuf || "" },
-      state.token,
+      { get_updates_buf: account.getUpdatesBuf || "" },
+      account.token,
       LONG_POLL_MS + 5_000,
     );
   } catch (err) {
@@ -185,9 +231,11 @@ export async function getUpdates() {
   }
   if (typeof data.get_updates_buf === "string") {
     updateState((s) => {
-      s.getUpdatesBuf = data.get_updates_buf;
+      const hit = findAccount(s, { token: account.token });
+      if (hit) hit.getUpdatesBuf = data.get_updates_buf;
       return s;
     });
+    account.getUpdatesBuf = data.get_updates_buf;
   }
   return { ...data, session_expired: false };
 }
@@ -270,18 +318,25 @@ export async function normalizeInbound(msg) {
   };
 }
 
-export async function collectInbound(rawMsgs) {
-  const state = loadState();
+export async function collectInbound(rawMsgs, account) {
   const out = [];
   for (const msg of rawMsgs || []) {
     if (msg.message_type && msg.message_type !== MSG_TYPE.USER) continue;
     if (msg.message_state && msg.message_state !== MSG_STATE.FINISH) continue;
     const normalized = await normalizeInbound(msg);
     if (!normalized.from_user_id) continue;
-    updateState((s) => rememberContext(s, normalized.from_user_id, normalized.context_token));
-    out.push(normalized);
+    updateState((s) => {
+      const hit = findAccount(s, { token: account.token });
+      if (hit) rememberContext(s, hit, normalized.from_user_id, normalized.context_token);
+      return s;
+    });
+    out.push({
+      ...normalized,
+      ilink_bot_id: account.ilinkBotId,
+      ilink_user_id: account.ilinkUserId,
+    });
   }
-  return { messages: out, logged_in_user: state.ilinkUserId };
+  return { messages: out, logged_in_user: account.ilinkUserId };
 }
 
 export function toWeChatText(markdown) {
@@ -296,9 +351,8 @@ export function toWeChatText(markdown) {
     .trim();
 }
 
-async function sendItem(to, item, contextToken) {
-  const state = requireAccount();
-  const token = contextToken || contextFor(state, to);
+async function sendItem(account, to, item, contextToken) {
+  const token = contextToken || contextFor(account, to);
   const body = {
     msg: {
       from_user_id: "",
@@ -310,18 +364,24 @@ async function sendItem(to, item, contextToken) {
       context_token: token || undefined,
     },
   };
-  const resp = await apiPost(state.baseUrl, "ilink/bot/sendmessage", body, state.token);
+  const resp = await apiPost(account.baseUrl, "ilink/bot/sendmessage", body, account.token);
   if (resp.ret && resp.ret !== 0) {
     throw new Error(`发送失败 ret=${resp.ret} ${resp.errmsg || ""}`);
   }
-  return { to_user_id: to, context_token: token || "", ret: resp.ret ?? 0 };
+  return {
+    to_user_id: to,
+    ilink_bot_id: account.ilinkBotId,
+    ilink_user_id: account.ilinkUserId,
+    context_token: token || "",
+    ret: resp.ret ?? 0,
+  };
 }
 
-export async function sendText(toUserId, text) {
-  const state = requireAccount();
-  const to = toUserId || state.lastFromUserId;
-  if (!to) throw new Error("没有目标用户。传入 to_user_id，或等对方先发一条微信");
-  const token = contextFor(state, to);
+export async function sendText(toUserId, text, ilinkBotId) {
+  const state = loadState();
+  const account = resolveAccountForPeer(state, { to_user_id: toUserId, ilink_bot_id: ilinkBotId });
+  const to = toUserId;
+  const token = contextFor(account, to);
   if (!token) {
     throw new Error("还没有该用户的 context_token。对方需要先从微信给你发一条消息，会话通道才会建立");
   }
@@ -331,13 +391,12 @@ export async function sendText(toUserId, text) {
   for (let i = 0; i < plain.length; i += 4000) chunks.push(plain.slice(i, i + 4000));
   let last;
   for (const chunk of chunks) {
-    last = await sendItem(to, { type: ITEM.TEXT, text_item: { text: chunk } }, token);
+    last = await sendItem(account, to, { type: ITEM.TEXT, text_item: { text: chunk } }, token);
   }
   return last;
 }
 
-async function uploadFile(to, filePath, mediaType) {
-  const state = requireAccount();
+async function uploadFile(account, to, filePath, mediaType) {
   const raw = fs.readFileSync(filePath);
   const rawMd5 = crypto.createHash("md5").update(raw).digest("hex");
   const aesKey = crypto.randomBytes(16);
@@ -345,7 +404,7 @@ async function uploadFile(to, filePath, mediaType) {
   const cipher = aesEcb(raw, aesKey, "encrypt");
   const filekey = crypto.randomBytes(16).toString("hex");
   const upload = await apiPost(
-    state.baseUrl,
+    account.baseUrl,
     "ilink/bot/getuploadurl",
     {
       filekey,
@@ -357,7 +416,7 @@ async function uploadFile(to, filePath, mediaType) {
       no_need_thumb: true,
       aeskey: aesKeyHex,
     },
-    state.token,
+    account.token,
   );
   const uploadUrl = upload.upload_full_url
     || `${CDN_BASE}/upload?encrypted_query_param=${encodeURIComponent(upload.upload_param || "")}&filekey=${encodeURIComponent(filekey)}`;
@@ -386,60 +445,77 @@ function mediaRef(uploaded) {
   };
 }
 
-export async function sendMedia(toUserId, filePath, kind, caption) {
-  const state = requireAccount();
-  const to = toUserId || state.lastFromUserId;
-  if (!to) throw new Error("没有目标用户");
-  const token = contextFor(state, to);
+export async function sendMedia(toUserId, filePath, kind, caption, ilinkBotId) {
+  const state = loadState();
+  const account = resolveAccountForPeer(state, { to_user_id: toUserId, ilink_bot_id: ilinkBotId });
+  const to = toUserId;
+  const token = contextFor(account, to);
   if (!token) throw new Error("还没有该用户的 context_token，需对方先发一条微信");
   if (!fs.existsSync(filePath)) throw new Error(`文件不存在: ${filePath}`);
   const typeMap = { image: UPLOAD.IMAGE, video: UPLOAD.VIDEO, file: UPLOAD.FILE };
   const mediaType = typeMap[kind];
   if (!mediaType) throw new Error("kind 只能是 image / video / file");
-  if (caption) await sendText(to, caption);
-  const uploaded = await uploadFile(to, filePath, mediaType);
+  if (caption) await sendText(to, caption, account.ilinkBotId);
+  const uploaded = await uploadFile(account, to, filePath, mediaType);
   const media = mediaRef(uploaded);
   if (kind === "image") {
-    return sendItem(to, { type: ITEM.IMAGE, image_item: { media, mid_size: uploaded.fileSizeCiphertext } }, token);
+    return sendItem(account, to, { type: ITEM.IMAGE, image_item: { media, mid_size: uploaded.fileSizeCiphertext } }, token);
   }
   if (kind === "video") {
-    return sendItem(to, { type: ITEM.VIDEO, video_item: { media, video_size: uploaded.fileSizeCiphertext } }, token);
+    return sendItem(account, to, { type: ITEM.VIDEO, video_item: { media, video_size: uploaded.fileSizeCiphertext } }, token);
   }
-  return sendItem(to, {
+  return sendItem(account, to, {
     type: ITEM.FILE,
     file_item: { media, file_name: path.basename(filePath), len: String(uploaded.fileSize) },
   }, token);
 }
 
-export async function setTyping(toUserId, on) {
-  const state = requireAccount();
-  const to = toUserId || state.lastFromUserId;
-  if (!to) throw new Error("没有目标用户");
-  let ticket = state.typingTickets?.[to]?.ticket;
-  const age = Date.now() - (state.typingTickets?.[to]?.at || 0);
+export async function setTyping(toUserId, on, ilinkBotId) {
+  const state = loadState();
+  const account = resolveAccountForPeer(state, { to_user_id: toUserId, ilink_bot_id: ilinkBotId });
+  const to = toUserId;
+  let ticket = account.typingTickets?.[to]?.ticket;
+  const age = Date.now() - (account.typingTickets?.[to]?.at || 0);
   if (!ticket || age > 20 * 60 * 60 * 1000) {
     const cfg = await apiPost(
-      state.baseUrl,
+      account.baseUrl,
       "ilink/bot/getconfig",
-      { ilink_user_id: to, context_token: contextFor(state, to) || undefined },
-      state.token,
+      { ilink_user_id: to, context_token: contextFor(account, to) || undefined },
+      account.token,
       10_000,
     );
     ticket = cfg.typing_ticket || "";
     if (ticket) {
       updateState((s) => {
-        s.typingTickets[to] = { ticket, at: Date.now() };
+        const hit = findAccount(s, { token: account.token });
+        if (hit) hit.typingTickets[to] = { ticket, at: Date.now() };
         return s;
       });
     }
   }
   if (!ticket) throw new Error("未拿到 typing_ticket");
   await apiPost(
-    state.baseUrl,
+    account.baseUrl,
     "ilink/bot/sendtyping",
     { ilink_user_id: to, typing_ticket: ticket, status: on ? TYPING.ON : TYPING.OFF },
-    state.token,
+    account.token,
     10_000,
   );
-  return { to_user_id: to, typing: !!on };
+  return { to_user_id: to, ilink_bot_id: account.ilinkBotId, typing: !!on };
+}
+
+export function statusPayload() {
+  const state = loadState();
+  const accounts = listAccounts(state);
+  return {
+    logged_in: accounts.length > 0,
+    account_count: accounts.length,
+    accounts: accounts.map((a) => ({
+      ...accountSummary(a),
+      peers: Object.keys(a.contextTokens || {}),
+    })),
+    pending_qr_count: state.pendingQrs.length,
+    allow_from: state.allowFrom,
+    inbox: peekInboxCount(),
+  };
 }
