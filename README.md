@@ -54,11 +54,11 @@ Grok Bot 的微信 iLink 渠道。入站消息经 webhook 唤醒 agent。
 
 ## 卸载
 
-跟 Grok Bot 说「卸掉微信插件」。助手会：
+跟 Grok Bot 说「卸掉微信插件」。安装助手会：
 
-1. 调用 `wechat_uninstall`（或执行 `scripts/uninstall.sh`）清理本机：停止 monitor、删除 `/home/box/grok-wechat-plugin` 与 `/home/box/.grok-wechat`（含账号 token、wake、自启脚本）。
-2. 从 Settings 卸载 `grok-wechat` 连接器（若尚未卸载）。仅从 Settings 卸载时，插件也会在 MCP 退出与 monitor 超时后自动清理本机残留。
-3. 删除**所有助手**上的 Routine「微信入站唤醒」和「微信监听保活」，并通知其他仍保留这些 Routine 的助手（如测试1、微信小助手）一并删除。
-4. 清理扫码绑定时创建的专属助手上的微信 Routine。
+1. 调用 `wechat_uninstall` 清理本机（monitor、插件目录、`/home/box/.grok-wechat`），并读取 `dedicated_assistants_sidebar_delete` 中的专属助手名称。
+2. 从 Settings 卸载 `grok-wechat` 连接器（若仍存在）。
+3. 删除**每个**助手上的 Routine「微信入站唤醒」与「微信监听保活」（自己的直接删，其他的发消息要求删除或在可访问范围内删除）。
+4. 告知用户在侧栏右键删除返回列表中的专属助手（如「微信1」「微信2」）；助手本身只能由用户在侧栏删除。
 
 完成后重装需重新扫码，`wechat_status` 为零账号。

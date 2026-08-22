@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { clearPid, homeDir, monitorRunning, readPid } from "./store.js";
+import { clearPid, homeDir, listAccounts, loadState, monitorRunning, readPid } from "./store.js";
 
 const PLUGIN_DIR_NAMES = ["grok-wechat-plugin"];
 const GROK_BOX_HOME = "/home/box";
@@ -241,7 +241,37 @@ export function registerShutdownCleanup() {
   process.stdin?.once("close", run);
 }
 
+export function collectDedicatedAssistants() {
+  return listAccounts(loadState())
+    .map((a) => ({
+      ilink_bot_id: a.ilinkBotId,
+      assistant_id: a.dedicatedAssistant?.id || "",
+      assistant_name: a.dedicatedAssistant?.name || "",
+    }))
+    .filter((a) => a.assistant_id || a.assistant_name);
+}
+
+function platformCleanup(dedicatedAssistants) {
+  const sidebarNames = dedicatedAssistants
+    .map((a) => a.assistant_name)
+    .filter(Boolean);
+  return {
+    connector: "grok-wechat",
+    routine_names: ["微信入站唤醒", "微信监听保活"],
+    dedicated_assistants_sidebar_delete: dedicatedAssistants,
+    dedicated_assistant_sidebar_names: sidebarNames,
+    execute: [
+      "从 Grok Bot Settings 卸载 grok-wechat 连接器（若仍存在）",
+      "在每个仍有 Routine「微信入站唤醒」或「微信监听保活」的助手上删除这两条 Routine：安装助手删除自己的；向其他仍保留的助手发消息要求其删除，或在可访问范围内直接删除这两条 Routine",
+      sidebarNames.length
+        ? `告知用户在侧栏右键 → 删除以下扫码绑定时创建的专属助手：${sidebarNames.join("、")}`
+        : "若绑定期间创建了专属助手，告知用户在侧栏右键 → 删除对应助手（名称见 dedicated_assistants_sidebar_delete）",
+    ],
+  };
+}
+
 export function runUninstall({ deferPluginRemoval = false } = {}) {
+  const dedicatedAssistants = collectDedicatedAssistants();
   const stoppedPids = stopAllMonitors();
   const removedAutostart = removeAutostartEntries();
   const removedStateDirs = removeAllStateHomes();
@@ -262,20 +292,8 @@ export function runUninstall({ deferPluginRemoval = false } = {}) {
     removed_plugin_dirs: removedPluginDirs,
     removed_autostart: removedAutostart,
     deferred_plugin_removal: deferredPluginRemoval,
-    platform_steps: platformSteps(),
-  };
-}
-
-function platformSteps() {
-  return {
-    connector: "grok-wechat",
-    routines: ["微信入站唤醒", "微信监听保活"],
-    actions: [
-      "从 Grok Bot Settings 卸载 grok-wechat 连接器（若尚未卸载）",
-      "列出所有助手，在每个仍有 Routine「微信入站唤醒」或「微信监听保活」的助手上删除这两条 Routine",
-      "向仍保留上述 Routine 的其他助手（如测试1、微信小助手）发送消息，要求其删除这两条 Routine",
-      "扫码绑定时创建的专属助手：删除其「微信入站唤醒」Routine；按用户意愿保留或删除助手本身",
-    ],
+    dedicated_assistants_sidebar_delete: dedicatedAssistants,
+    platform_cleanup: platformCleanup(dedicatedAssistants),
   };
 }
 

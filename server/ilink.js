@@ -110,6 +110,8 @@ function accountSummary(account) {
     ilink_user_id: account.ilinkUserId,
     logged_in: Boolean(account.token),
     has_wake: hasAccountWake(account),
+    dedicated_assistant_id: account.dedicatedAssistant?.id || "",
+    dedicated_assistant_name: account.dedicatedAssistant?.name || "",
   };
 }
 
@@ -173,7 +175,7 @@ export async function loginWait(timeoutMs = 120_000, qrcodeArg) {
         ilink_bot_id: account.ilinkBotId,
         ilink_user_id: account.ilinkUserId,
         accounts: listAccounts(loadState()).map(accountSummary),
-        hint: "创建专属助手并传入 ilink_bot_id；由该助手自建 Routine「微信入站唤醒」并调用 wechat_set_wake，直至 wechat_status 显示 has_wake=true。",
+        hint: "创建专属助手并传入 ilink_bot_id；由该助手自建 Routine「微信入站唤醒」并调用 wechat_set_wake（含 assistant_id、assistant_name），直至 wechat_status 显示 has_wake=true。",
       };
     }
     if (last.status === "binded_redirect" && last.bot_token) {
@@ -190,7 +192,7 @@ export async function loginWait(timeoutMs = 120_000, qrcodeArg) {
         ilink_bot_id: account.ilinkBotId,
         ilink_user_id: account.ilinkUserId,
         accounts: listAccounts(loadState()).map(accountSummary),
-        hint: "创建专属助手并传入 ilink_bot_id；由该助手自建 Routine「微信入站唤醒」并调用 wechat_set_wake，直至 wechat_status 显示 has_wake=true。",
+        hint: "创建专属助手并传入 ilink_bot_id；由该助手自建 Routine「微信入站唤醒」并调用 wechat_set_wake（含 assistant_id、assistant_name），直至 wechat_status 显示 has_wake=true。",
       };
     }
     if (last.status === "expired") {
@@ -548,21 +550,32 @@ export async function probeWake(url, key) {
   return { status: res.status, body: text.slice(0, 180) };
 }
 
-export async function setAccountWake(ilink_bot_id, url, key) {
+export async function setAccountWake(ilink_bot_id, url, key, { assistant_id, assistant_name } = {}) {
   const state = loadState();
   const account = requireAccount(state, { ilink_bot_id });
   if (!url || !key) throw new Error("url 和 key 必填");
   const probe = await probeWake(url, key);
   updateState((s) => {
     const hit = findAccount(s, { ilink_bot_id });
-    if (hit) hit.wake = { url, key };
+    if (hit) {
+      hit.wake = { url, key };
+      if (assistant_id || assistant_name) {
+        hit.dedicatedAssistant = {
+          id: assistant_id || hit.dedicatedAssistant?.id || "",
+          name: assistant_name || hit.dedicatedAssistant?.name || "",
+        };
+      }
+    }
     return s;
   });
   saveStateSecure(loadState());
+  const updated = findAccount(loadState(), { ilink_bot_id });
   return {
     ilink_bot_id: account.ilinkBotId,
     ilink_user_id: account.ilinkUserId,
     wake_configured: true,
+    dedicated_assistant_id: updated?.dedicatedAssistant?.id || "",
+    dedicated_assistant_name: updated?.dedicatedAssistant?.name || "",
     probe,
   };
 }

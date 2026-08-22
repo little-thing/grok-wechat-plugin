@@ -33,6 +33,7 @@ export function emptyAccount() {
     contextTokens: {},
     typingTickets: {},
     wake: null,
+    dedicatedAssistant: null,
   };
 }
 

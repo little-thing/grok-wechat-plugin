@@ -31,7 +31,7 @@ description: 用户要在 Grok Bot 里安装、登录、收发或卸载微信 iL
 1. `wechat_login_wait` 返回该账号的 `ilink_bot_id`、`ilink_user_id`。
 2. 安装助手为该微信用户**创建专属助手**，把 `ilink_bot_id` 交给该助手（若平台允许，也可由安装助手在其上建好 Routine 框架）。
 3. **专属助手**在其自身下创建 Routine **「微信入站唤醒」**（webhook）。入站后 `wechat_inbox` → typing / `wechat_send`，只处理该号的私信。
-4. 同一专属助手立即调用 `wechat_set_wake`（传入本 Routine 的 url、key 与该号 `ilink_bot_id`）。连接器为账号级，专属助手可直接调用。配置写入 `account.json`（权限 600），并探测 Bearer。
+4. 同一专属助手立即调用 `wechat_set_wake`（传入本 Routine 的 url、key、`ilink_bot_id`，以及 `assistant_id` / `assistant_name` 写入 `account.json`）。连接器为账号级，专属助手可直接调用。配置权限 600，并探测 Bearer。
 5. `wechat_status` 显示该账号 `has_wake=true` 时绑定完成。该微信号的入站只 POST 该助手的 webhook；其他已绑定号不受影响。
 
 多账号：同一连接器 `wechat_login_start` 出码 → 立即 `wechat_login_wait` 至绑定成功，为每个号重复「专属助手自建 Routine + 自调 wechat_set_wake」。`wechat_status` 列出全部账号及 `has_wake`。
@@ -48,29 +48,29 @@ stdio 用换行分隔 JSON（MCP 2025-11-25）。
 
 ## 卸载
 
-用户说「卸掉微信插件」时，由当前助手**执行**完整卸载（本机 + 平台），直到重装后 `wechat_status` 显示零账号。
+用户说「卸掉微信插件」时，安装助手**执行**下列全部步骤。
 
 ### 1. 本机清理
 
-调用 `wechat_uninstall`（或执行 `scripts/uninstall.sh`）。会：
+调用 `wechat_uninstall`（或 `scripts/uninstall.sh`）：
 
-- 停止所有 monitor 进程（`monitor.pid`、`pkill` 匹配 `grok-wechat-plugin/server/index.js --monitor`）
-- 删除 `/home/box/grok-wechat-plugin` 与 `GROK_WECHAT_HOME` / `/home/box/.grok-wechat`（含 `account.json`、`wake.json`、inbox、media、`monitor.pid`、`monitor.log`、`ensure-monitor.sh`）
-- 清理 crontab 与 shell 配置里的 grok-wechat / ensure-monitor 自启项
+- 停止所有 monitor 进程
+- 删除 `/home/box/grok-wechat-plugin` 与 `GROK_WECHAT_HOME` / `/home/box/.grok-wechat`（含 `account.json`、token、wake、inbox、media、pid、log、`ensure-monitor.sh`）
+- 清理 crontab 与 shell 自启项
 
-用户若先从 Settings 卸载连接器：MCP 进程退出时会触发延迟本机清理；monitor 在连接器消失约 30 秒后也会自动执行同样清理。
+返回的 `platform_cleanup` 含 `dedicated_assistants_sidebar_delete`（绑定期间记录的专属助手 id/名称）。用户若先从 Settings 卸载连接器，MCP 退出与 monitor 看门狗也会触发同等本机清理。
 
-### 2. 平台清理（助手执行）
+### 2. 平台清理（安装助手执行）
 
-1. 从 Grok Bot Settings 卸载 `grok-wechat` 连接器（若用户尚未卸载）。
-2. 列出**所有助手**，在每个仍有 Routine「微信入站唤醒」或「微信监听保活」的助手上**删除**这两条 Routine。
-3. 向仍保留上述 Routine 的其他助手（例如「测试1」「微信小助手」）发消息，要求其删除这两条 Routine。
-4. 扫码绑定时创建的**专属助手**：删除其「微信入站唤醒」Routine；助手本身按用户意愿保留或删除。
+1. 从 Grok Bot Settings **卸载** `grok-wechat` 连接器（若仍存在）。
+2. **删除**每个助手上的 Routine「微信入站唤醒」与「微信监听保活」：安装助手删除自己的；向仍保留这两条 Routine 的其他助手发消息要求其删除，或在可访问范围内直接删除这两条 Routine。
+3. 根据 `wechat_uninstall` 返回的 `dedicated_assistant_sidebar_names`，**告知用户**在侧栏对下列专属助手右键 → 删除（如「微信1」「微信2」）。Grok Bot 无跨助手删除 API，侧栏删除由用户完成。
 
 ### 3. 完成标准
 
-- 无 `grok-wechat` MCP 连接器
-- 无 `/home/box/grok-wechat-plugin`、无 `/home/box/.grok-wechat`
-- 无 `node .../grok-wechat-plugin/server/index.js --monitor` 进程
+- 无 `grok-wechat` 连接器
+- 无插件目录、无 `.grok-wechat` 状态
+- 无 monitor 进程
 - 各助手无「微信入站唤醒」「微信监听保活」Routine
-- 重装后 `wechat_status` 为零账号，需重新扫码
+- 用户已在侧栏删除 `dedicated_assistants_sidebar_delete` 所列专属助手
+- 重装后 `wechat_status` 为零账号
