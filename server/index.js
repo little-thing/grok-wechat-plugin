@@ -30,7 +30,7 @@ import {
   setTyping,
   statusPayload,
 } from "./ilink.js";
-import { uninstallWechat } from "./uninstall.js";
+import { registerShutdownCleanup, touchConnectorActive, connectorAbandoned, runUninstall, uninstallWechat } from "./uninstall.js";
 
 const self = fileURLToPath(import.meta.url);
 
@@ -249,7 +249,7 @@ const tools = {
     },
   },
   wechat_uninstall: {
-    description: "完整卸载本机微信渠道：停止 monitor、删除插件目录与状态目录（GROK_WECHAT_HOME / ~/.grok-wechat），并返回平台侧清理清单。",
+    description: "完整卸载微信渠道：停止 monitor、删除状态与插件目录、清理自启项，并返回平台侧 Routine/连接器清理步骤。",
     inputSchema: { type: "object", properties: {} },
     handle: async () => ok(uninstallWechat()),
   },
@@ -285,6 +285,7 @@ async function onRpc(msg) {
   } catch { /* ignore */ }
   const { id, method, params } = msg;
   if (method === "initialize") {
+    touchConnectorActive();
     ensureMonitor();
     return {
       jsonrpc: "2.0",
@@ -299,9 +300,11 @@ async function onRpc(msg) {
   if (method === "notifications/initialized" || method === "initialized") return null;
   if (method === "ping") return { jsonrpc: "2.0", id, result: {} };
   if (method === "tools/list") {
+    touchConnectorActive();
     return { jsonrpc: "2.0", id, result: { tools: TOOL_LIST } };
   }
   if (method === "tools/call") {
+    touchConnectorActive();
     const result = await dispatch(params?.name, params?.arguments);
     return { jsonrpc: "2.0", id, result };
   }
@@ -310,6 +313,7 @@ async function onRpc(msg) {
 }
 
 function startMcp() {
+  registerShutdownCleanup();
   ensureMonitor();
   let buf = Buffer.alloc(0);
   process.stdin.on("data", async (chunk) => {
@@ -425,6 +429,11 @@ async function runMonitor() {
   let failures = 0;
   while (true) {
     try {
+      if (connectorAbandoned()) {
+        log("connector removed, running uninstall");
+        runUninstall();
+        process.exit(0);
+      }
       const accountsNow = listAccounts();
       if (!accountsNow.length) {
         log("no accounts, stopping");
@@ -455,7 +464,7 @@ if (process.argv.includes("--monitor")) {
 } else if (process.argv.includes("--ensure-monitor")) {
   process.stdout.write(JSON.stringify(ensureMonitor()) + "\n");
 } else if (process.argv.includes("--uninstall")) {
-  process.stdout.write(`${JSON.stringify(uninstallWechat(), null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(runUninstall({ deferPluginRemoval: false }), null, 2)}\n`);
 } else {
   startMcp();
 }

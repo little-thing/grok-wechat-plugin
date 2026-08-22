@@ -21,7 +21,7 @@ description: 用户要在 Grok Bot 里安装、登录、收发或卸载微信 iL
 安装完成后 Grok Bot 上具备：
 
 1. **连接器** `grok-wechat`，入口 `server/index.js`。用户若需确认则点「加」添加连接器。
-2. **插件文件**落在 Grok Bot 电脑（默认 `/home/box/grok-wechat-plugin`）。
+2. **插件文件**落在 Grok Bot 电脑（`/home/box/grok-wechat-plugin`）。
 3. **monitor 自启**：用户登录或 MCP `initialize` 时调用 `wechat_start_monitor` 拉起后台长轮询。
 4. **Routine「微信监听保活」**：每 5 分钟，提示词 `只调用 wechat_start_monitor，确保微信入站监听在跑。除此之外什么都不要做。` 一次调用为所有已绑定账号保活 monitor。
 5. **扫码绑定**：`wechat_login_start` 出码 → 用户扫码 → `wechat_login_wait`。对方先发一条才有 context_token。
@@ -48,27 +48,29 @@ stdio 用换行分隔 JSON（MCP 2025-11-25）。
 
 ## 卸载
 
-用户说「卸掉微信插件」时，按顺序完成本机与平台清理。
+用户说「卸掉微信插件」时，由当前助手**执行**完整卸载（本机 + 平台），直到重装后 `wechat_status` 显示零账号。
 
-### 1. 本机清理（先做）
+### 1. 本机清理
 
-调用 `wechat_uninstall`，或执行 `scripts/uninstall.sh`。二者等价，会：
+调用 `wechat_uninstall`（或执行 `scripts/uninstall.sh`）。会：
 
-- 停止所有 monitor 进程（`monitor.pid` + 匹配 `grok-wechat-plugin/server/index.js --monitor` 的进程）
-- 删除插件目录（如 `/home/box/grok-wechat-plugin`）与状态目录（`GROK_WECHAT_HOME` 或 `~/.grok-wechat`，含 `account.json`、`wake.json`、inbox、media、`monitor.pid`、`monitor.log`）
-- 返回 `platform_cleanup` 清单，供后续步骤使用
+- 停止所有 monitor 进程（`monitor.pid`、`pkill` 匹配 `grok-wechat-plugin/server/index.js --monitor`）
+- 删除 `/home/box/grok-wechat-plugin` 与 `GROK_WECHAT_HOME` / `/home/box/.grok-wechat`（含 `account.json`、`wake.json`、inbox、media、`monitor.pid`、`monitor.log`、`ensure-monitor.sh`）
+- 清理 crontab 与 shell 配置里的 grok-wechat / ensure-monitor 自启项
 
-### 2. 平台清理
+用户若先从 Settings 卸载连接器：MCP 进程退出时会触发延迟本机清理；monitor 在连接器消失约 30 秒后也会自动执行同样清理。
 
-1. 从 Grok Bot Settings **卸载** `grok-wechat` 连接器。
-2. 在**每个**仍有 Routine「微信入站唤醒」或「微信监听保活」的助手上**删除**这两条 Routine。当前助手自行删除；若其他助手仍保留，通知那些助手删除。
-3. **专属助手**（扫码绑定时为每个微信号创建的助手）：删除其「微信入站唤醒」Routine；wake 绑定随状态目录删除而失效。助手本身按用户意愿保留或删除。
+### 2. 平台清理（助手执行）
 
-### 3. 卸载完成标准
+1. 从 Grok Bot Settings 卸载 `grok-wechat` 连接器（若用户尚未卸载）。
+2. 列出**所有助手**，在每个仍有 Routine「微信入站唤醒」或「微信监听保活」的助手上**删除**这两条 Routine。
+3. 向仍保留上述 Routine 的其他助手（例如「测试1」「微信小助手」）发消息，要求其删除这两条 Routine。
+4. 扫码绑定时创建的**专属助手**：删除其「微信入站唤醒」Routine；助手本身按用户意愿保留或删除。
+
+### 3. 完成标准
 
 - 无 `grok-wechat` MCP 连接器
-- 无插件目录、无 `~/.grok-wechat` 状态
-- 无 `node .../server/index.js --monitor` 进程
+- 无 `/home/box/grok-wechat-plugin`、无 `/home/box/.grok-wechat`
+- 无 `node .../grok-wechat-plugin/server/index.js --monitor` 进程
 - 各助手无「微信入站唤醒」「微信监听保活」Routine
-
-重新使用需再次安装、扫码、配置 webhook。
+- 重装后 `wechat_status` 为零账号，需重新扫码

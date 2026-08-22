@@ -1,21 +1,34 @@
-import { execSync } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { clearPid, homeDir, monitorRunning, paths, readPid } from "./store.js";
+import { clearPid, homeDir, monitorRunning, readPid } from "./store.js";
 
 const PLUGIN_DIR_NAMES = ["grok-wechat-plugin"];
+const GROK_BOX_HOME = "/home/box";
+const MONITOR_MATCH = "grok-wechat-plugin/server/index.js --monitor";
+const MCP_MATCH = "grok-wechat-plugin/server/index.js";
 
 function isPluginDir(dir) {
   if (!dir || !fs.existsSync(dir)) return false;
-  const base = path.basename(path.resolve(dir));
-  return PLUGIN_DIR_NAMES.includes(base);
+  return PLUGIN_DIR_NAMES.includes(path.basename(path.resolve(dir)));
 }
 
-function defaultPluginDirs() {
+export function knownStateHomes() {
+  const homes = new Set([
+    path.join(GROK_BOX_HOME, ".grok-wechat"),
+    path.join(os.homedir(), ".grok-wechat"),
+  ]);
+  const envHome = process.env.GROK_WECHAT_HOME?.trim();
+  if (envHome) homes.add(path.resolve(envHome));
+  homes.add(homeDir());
+  return [...homes];
+}
+
+export function knownPluginDirs() {
   const dirs = new Set([
-    "/home/box/grok-wechat-plugin",
+    path.join(GROK_BOX_HOME, "grok-wechat-plugin"),
     "/workspace/grok-wechat-plugin",
   ]);
   try {
@@ -28,37 +41,45 @@ function defaultPluginDirs() {
   return [...dirs];
 }
 
-function stopMonitorProcesses() {
+function sh(cmd) {
+  return execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+}
+
+function listMonitorPids() {
+  const pids = new Set();
+  const fromFile = readPid();
+  if (fromFile) pids.add(fromFile);
+  const running = monitorRunning();
+  if (running) pids.add(running);
+  try {
+    const out = sh(`pgrep -f "${MONITOR_MATCH}" 2>/dev/null || true`);
+    for (const line of out.split("\n")) {
+      const n = Number(line.trim());
+      if (Number.isFinite(n) && n > 0) pids.add(n);
+    }
+  } catch {
+    // ignore
+  }
+  return [...pids];
+}
+
+export function stopAllMonitors() {
   const stopped = [];
-  const pid = readPid();
-  if (pid) {
+  for (const pid of listMonitorPids()) {
     try {
       process.kill(pid, "SIGTERM");
       stopped.push(pid);
     } catch {
       // already gone
     }
-    clearPid();
   }
-  const running = monitorRunning();
-  if (running && !stopped.includes(running)) {
-    try {
-      process.kill(running, "SIGTERM");
-      stopped.push(running);
-    } catch {
-      // already gone
-    }
-    clearPid();
-  }
+  clearPid();
   try {
-    execSync('pkill -f "grok-wechat-plugin/server/index.js --monitor" 2>/dev/null || true', {
-      stdio: "ignore",
-      shell: "/bin/sh",
-    });
+    sh(`pkill -TERM -f "${MONITOR_MATCH}" 2>/dev/null || true`);
   } catch {
     // ignore
   }
-  return stopped;
+  return [...new Set(stopped)];
 }
 
 function removeDir(target) {
@@ -67,57 +88,202 @@ function removeDir(target) {
   return true;
 }
 
-function removeStateDir(stateHome) {
+export function removeAllStateHomes() {
   const removed = [];
-  const candidates = new Set([stateHome, homeDir(), path.join(os.homedir(), ".grok-wechat")]);
-  const envHome = process.env.GROK_WECHAT_HOME?.trim();
-  if (envHome) candidates.add(path.resolve(envHome));
-  for (const dir of candidates) {
+  for (const dir of knownStateHomes()) {
     if (removeDir(dir)) removed.push(dir);
   }
-  return removed;
+  return [...new Set(removed)];
 }
 
-function removePluginDirs(extraDirs = []) {
+export function removeAllPluginDirs() {
   const removed = [];
-  const candidates = new Set([...defaultPluginDirs(), ...extraDirs]);
-  for (const dir of candidates) {
+  for (const dir of knownPluginDirs()) {
     if (!isPluginDir(dir)) continue;
     if (removeDir(dir)) removed.push(dir);
   }
   return removed;
 }
 
-export function uninstallWechat() {
-  const stateHome = homeDir();
-  const stoppedPids = stopMonitorProcesses();
-  const removedPluginDirs = removePluginDirs();
-  const removedStateDirs = removeStateDir(stateHome);
+function lineMatchesAutostart(line) {
+  const text = line.trim();
+  if (!text || text.startsWith("#")) return false;
+  return /grok-wechat|ensure-monitor\.sh/.test(text);
+}
+
+function stripAutostartFromFile(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) return false;
+  const original = fs.readFileSync(filePath, "utf8");
+  const lines = original.split("\n");
+  const kept = lines.filter((line) => !lineMatchesAutostart(line));
+  if (kept.length === lines.length) return false;
+  const next = kept.join("\n");
+  if (next.trim()) fs.writeFileSync(filePath, next.endsWith("\n") ? next : `${next}\n`);
+  else fs.unlinkSync(filePath);
+  return true;
+}
+
+export function removeAutostartEntries() {
+  const touched = [];
+  const profileFiles = [
+    path.join(GROK_BOX_HOME, ".profile"),
+    path.join(GROK_BOX_HOME, ".bashrc"),
+    path.join(GROK_BOX_HOME, ".bash_profile"),
+    path.join(os.homedir(), ".profile"),
+    path.join(os.homedir(), ".bashrc"),
+    path.join(os.homedir(), ".bash_profile"),
+  ];
+  for (const file of profileFiles) {
+    if (stripAutostartFromFile(file)) touched.push(file);
+  }
+  try {
+    const current = sh("crontab -l 2>/dev/null || true");
+    if (current) {
+      const lines = current.split("\n");
+      const kept = lines.filter((line) => !lineMatchesAutostart(line));
+      if (kept.length !== lines.length) {
+        const tmp = path.join(os.tmpdir(), `grok-wechat-crontab-${process.pid}`);
+        fs.writeFileSync(tmp, kept.join("\n") + (kept.length ? "\n" : ""));
+        sh(`crontab "${tmp}"`);
+        fs.unlinkSync(tmp);
+        touched.push("crontab");
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return touched;
+}
+
+function mcpStillRunning() {
+  try {
+    const out = sh(`pgrep -f "${MCP_MATCH}" 2>/dev/null || true`);
+    for (const line of out.split("\n")) {
+      const pid = Number(line.trim());
+      if (!Number.isFinite(pid) || pid <= 0) continue;
+      const args = sh(`ps -p ${pid} -o args= 2>/dev/null || true`);
+      if (args && !args.includes("--monitor") && !args.includes("--uninstall")) return true;
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
+let mcpGoneSince = 0;
+
+export function connectorAbandoned() {
+  if (mcpStillRunning()) {
+    mcpGoneSince = 0;
+    return false;
+  }
+  if (!mcpGoneSince) mcpGoneSince = Date.now();
+  return Date.now() - mcpGoneSince > 30_000;
+}
+
+export function touchConnectorActive() {
+  for (const home of knownStateHomes()) {
+    try {
+      fs.mkdirSync(home, { recursive: true });
+      fs.writeFileSync(path.join(home, "connector-active"), `${Date.now()}\n`);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function deferredCleanupShell() {
+  const stateDirs = knownStateHomes().map((d) => `"${d}"`).join(" ");
+  const pluginDirs = knownPluginDirs().map((d) => `"${d}"`).join(" ");
+  return `
+sleep 3
+if pgrep -f "${MCP_MATCH}" >/dev/null 2>&1; then
+  for pid in $(pgrep -f "${MCP_MATCH}" 2>/dev/null || true); do
+    args=$(ps -p "$pid" -o args= 2>/dev/null || true)
+    case "$args" in *--monitor*|*--uninstall*) ;; *) exit 0 ;; esac
+  done
+fi
+pkill -TERM -f "${MONITOR_MATCH}" 2>/dev/null || true
+for d in ${stateDirs}; do rm -rf "$d" 2>/dev/null || true; done
+for d in ${pluginDirs}; do rm -rf "$d" 2>/dev/null || true; done
+for f in /home/box/.profile /home/box/.bashrc /home/box/.bash_profile "$HOME/.profile" "$HOME/.bashrc" "$HOME/.bash_profile"; do
+  [ -f "$f" ] || continue
+  grep -v -E 'grok-wechat|ensure-monitor\\.sh' "$f" > "$f.tmp" 2>/dev/null && mv "$f.tmp" "$f" || true
+done
+crontab -l 2>/dev/null | grep -v -E 'grok-wechat|ensure-monitor\\.sh' | crontab - 2>/dev/null || true
+`.trim();
+}
+
+let shutdownHookRegistered = false;
+
+export function scheduleDeferredUninstall() {
+  try {
+    const child = spawn("sh", ["-c", deferredCleanupShell()], {
+      detached: true,
+      stdio: "ignore",
+      env: process.env,
+    });
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function registerShutdownCleanup() {
+  if (shutdownHookRegistered) return;
+  shutdownHookRegistered = true;
+  const run = () => scheduleDeferredUninstall();
+  process.once("SIGTERM", run);
+  process.once("SIGINT", run);
+  process.once("SIGHUP", run);
+  process.stdin?.once("end", run);
+  process.stdin?.once("close", run);
+}
+
+export function runUninstall({ deferPluginRemoval = false } = {}) {
+  const stoppedPids = stopAllMonitors();
+  const removedAutostart = removeAutostartEntries();
+  const removedStateDirs = removeAllStateHomes();
+  let removedPluginDirs = [];
+  let deferredPluginRemoval = false;
+
+  if (deferPluginRemoval || mcpStillRunning()) {
+    scheduleDeferredUninstall();
+    deferredPluginRemoval = true;
+  } else {
+    removedPluginDirs = removeAllPluginDirs();
+  }
 
   return {
     uninstalled: true,
     stopped_monitor_pids: stoppedPids,
-    removed_plugin_dirs: removedPluginDirs,
     removed_state_dirs: removedStateDirs,
-    platform_cleanup: {
-      connector: "grok-wechat",
-      routines: ["微信入站唤醒", "微信监听保活"],
-      actions: [
-        "从 Grok Bot Settings 卸载 grok-wechat 连接器",
-        "在每个仍有 Routine「微信入站唤醒」或「微信监听保活」的助手上删除这两条 Routine（当前助手自行删除；通知其他仍保留这些 Routine 的助手一并删除）",
-        "为扫码绑定创建的专属助手：删除其微信 Routine，并解除该号的 wake 绑定（wechat_set_wake 所配 webhook 随状态目录删除而失效；可删除或保留该助手本身，按用户意愿）",
-      ],
-    },
-    verify: {
-      no_monitor_process: "pgrep -af 'index.js --monitor' 应无 grok-wechat 相关进程",
-      no_plugin_dir: "插件目录应不存在",
-      no_state_dir: `${stateHome} 及 ~/.grok-wechat 应不存在`,
-      no_connector: "Settings 中无 grok-wechat 连接器",
-      no_routines: "各助手无「微信入站唤醒」「微信监听保活」Routine",
-    },
+    removed_plugin_dirs: removedPluginDirs,
+    removed_autostart: removedAutostart,
+    deferred_plugin_removal: deferredPluginRemoval,
+    platform_steps: platformSteps(),
   };
 }
 
+function platformSteps() {
+  return {
+    connector: "grok-wechat",
+    routines: ["微信入站唤醒", "微信监听保活"],
+    actions: [
+      "从 Grok Bot Settings 卸载 grok-wechat 连接器（若尚未卸载）",
+      "列出所有助手，在每个仍有 Routine「微信入站唤醒」或「微信监听保活」的助手上删除这两条 Routine",
+      "向仍保留上述 Routine 的其他助手（如测试1、微信小助手）发送消息，要求其删除这两条 Routine",
+      "扫码绑定时创建的专属助手：删除其「微信入站唤醒」Routine；按用户意愿保留或删除助手本身",
+    ],
+  };
+}
+
+export function uninstallWechat() {
+  return runUninstall({ deferPluginRemoval: true });
+}
+
 if (process.argv.includes("--uninstall")) {
-  process.stdout.write(`${JSON.stringify(uninstallWechat(), null, 2)}\n`);
+  const immediate = process.argv.includes("--immediate");
+  process.stdout.write(`${JSON.stringify(runUninstall({ deferPluginRemoval: !immediate }), null, 2)}\n`);
 }
