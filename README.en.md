@@ -16,19 +16,19 @@ Install this WeChat plugin https://github.com/little-thing/grok-wechat-plugin
 
 Follow the conversation. The full flow looks like this:
 
-![Install, confirm the channel, scan the QR code, paste the webhook](docs/bind-flow.png)
+![Install, confirm the channel, scan the QR code, dedicated assistant self-binds webhook](docs/bind-flow.png)
 
 1. **Confirm the channel**  
    Tap **加** in the chat to attach the WeChat channel to Grok Bot.
 
 2. **Connector and dedicated assistants**  
-   The assistant adds the shared WeChat connector. After each QR bind, it creates a **dedicated assistant** for that WeChat user, adds Routine **「微信入站唤醒」** (webhook) on that assistant, and calls `wechat_set_wake` with that account's `ilink_bot_id`. One shared Routine **「微信监听保活」** (every 5 minutes, `wechat_start_monitor`) covers all accounts.
+   The installing assistant adds the shared WeChat connector and one shared Routine **「微信监听保活」** (every 5 minutes, `wechat_start_monitor`). After each QR bind, it creates a **dedicated assistant** for that WeChat user, passes `ilink_bot_id` to it, and that assistant creates Routine **「微信入站唤醒」** (webhook) and calls `wechat_set_wake` with its own Routine URL and key.
 
 3. **Scan to log in**  
-   The assistant calls `wechat_login_start` to show a QR code, then immediately calls `wechat_login_wait` in a loop until the bind succeeds. For another account, repeat start and wait, then create another dedicated assistant and `wechat_set_wake`.
+   The installing assistant calls `wechat_login_start` to show a QR code, then immediately calls `wechat_login_wait` in a loop until `logged_in=true`. For another account, repeat start and wait, then create another dedicated assistant and complete self-bind.
 
-4. **Configure webhook**  
-   Copy the **webhook URL** and **secret** from the dedicated assistant's Routine「微信入站唤醒」, then call `wechat_set_wake` with that account's `ilink_bot_id`. After the probe succeeds, DMs to that WeChat number wake only that assistant.
+4. **Binding complete**  
+   `wechat_status` shows `has_wake=true` for that account. DMs to that WeChat number wake only its dedicated assistant.
 
 When someone DMs you on WeChat, the bot can reply there.
 

@@ -173,7 +173,7 @@ export async function loginWait(timeoutMs = 120_000, qrcodeArg) {
         ilink_bot_id: account.ilinkBotId,
         ilink_user_id: account.ilinkUserId,
         accounts: listAccounts(loadState()).map(accountSummary),
-        hint: "为该微信用户创建专属助手，在其助手下建 Routine「微信入站唤醒」，再 wechat_set_wake 绑定 webhook。",
+        hint: "创建专属助手并传入 ilink_bot_id；由该助手自建 Routine「微信入站唤醒」并调用 wechat_set_wake，直至 wechat_status 显示 has_wake=true。",
       };
     }
     if (last.status === "binded_redirect" && last.bot_token) {
@@ -190,7 +190,7 @@ export async function loginWait(timeoutMs = 120_000, qrcodeArg) {
         ilink_bot_id: account.ilinkBotId,
         ilink_user_id: account.ilinkUserId,
         accounts: listAccounts(loadState()).map(accountSummary),
-        hint: "为该微信用户创建专属助手，在其助手下建 Routine「微信入站唤醒」，再 wechat_set_wake 绑定 webhook。",
+        hint: "创建专属助手并传入 ilink_bot_id；由该助手自建 Routine「微信入站唤醒」并调用 wechat_set_wake，直至 wechat_status 显示 has_wake=true。",
       };
     }
     if (last.status === "expired") {
@@ -198,10 +198,10 @@ export async function loginWait(timeoutMs = 120_000, qrcodeArg) {
         s.pendingQrs = s.pendingQrs.filter((p) => p.qrcode !== qrcode);
         return s;
       });
-      return { logged_in: false, expired: true, hint: "调用 wechat_login_start 取新码，出码后立即 wechat_login_wait" };
+      return { logged_in: false, expired: true, next: "wechat_login_start", hint: "调用 wechat_login_start 取新码，出码后立即 wechat_login_wait" };
     }
   }
-  return { logged_in: false, status: last.status || "wait", hint: "立即再次调用 wechat_login_wait" };
+  return { logged_in: false, status: last.status || "wait", next: "wechat_login_wait", hint: "立即再次调用 wechat_login_wait" };
 }
 
 export async function notifyStart(account) {

@@ -207,7 +207,7 @@ const tools = {
     handle: async () => ok(ensureMonitor()),
   },
   wechat_set_wake: {
-    description: "为指定已绑定微信账号保存专属 webhook（url + key）。入站只唤醒该账号对应的助手。保存后探测 Bearer。",
+    description: "为指定已绑定微信账号保存专属 webhook（url + key）。由该号专属助手在自建 Routine「微信入站唤醒」后调用，传入本 Routine 的 url、key 与 ilink_bot_id。保存后探测 Bearer。",
     inputSchema: {
       type: "object",
       properties: {

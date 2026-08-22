@@ -29,12 +29,12 @@ description: 用户要在 Grok Bot 里安装、登录、收发或卸载微信 iL
 每次扫码绑定成功后：
 
 1. `wechat_login_wait` 返回该账号的 `ilink_bot_id`、`ilink_user_id`。
-2. 为该微信用户**创建专属助手**。
-3. 在该助手下创建 Routine **「微信入站唤醒」**（webhook）。入站后 `wechat_inbox` → typing / `wechat_send`，只处理该号的私信。
-4. 用户从该 Routine 复制 **webhook 地址**和**密钥**发来；调用 `wechat_set_wake`（传入该号 `ilink_bot_id`、url、key）。配置写入 `account.json`（权限 600），并探测 Bearer。
-5. 该微信号的入站只 POST 该助手的 webhook；其他已绑定号不受影响。
+2. 安装助手为该微信用户**创建专属助手**，把 `ilink_bot_id` 交给该助手（若平台允许，也可由安装助手在其上建好 Routine 框架）。
+3. **专属助手**在其自身下创建 Routine **「微信入站唤醒」**（webhook）。入站后 `wechat_inbox` → typing / `wechat_send`，只处理该号的私信。
+4. 同一专属助手立即调用 `wechat_set_wake`（传入本 Routine 的 url、key 与该号 `ilink_bot_id`）。连接器为账号级，专属助手可直接调用。配置写入 `account.json`（权限 600），并探测 Bearer。
+5. `wechat_status` 显示该账号 `has_wake=true` 时绑定完成。该微信号的入站只 POST 该助手的 webhook；其他已绑定号不受影响。
 
-多账号：同一连接器 `wechat_login_start` 出码 → 立即 `wechat_login_wait` 至绑定成功，为每个号重复「专属助手 + 微信入站唤醒 + wechat_set_wake」。`wechat_status` 列出全部账号及 `has_wake`。
+多账号：同一连接器 `wechat_login_start` 出码 → 立即 `wechat_login_wait` 至绑定成功，为每个号重复「专属助手自建 Routine + 自调 wechat_set_wake」。`wechat_status` 列出全部账号及 `has_wake`。
 
 stdio 用换行分隔 JSON（MCP 2025-11-25）。
 
