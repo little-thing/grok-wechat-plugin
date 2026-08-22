@@ -32,6 +32,7 @@ export function emptyAccount() {
     getUpdatesBuf: "",
     contextTokens: {},
     typingTickets: {},
+    wake: null,
   };
 }
 
@@ -263,4 +264,38 @@ export function monitorRunning() {
   if (isPidAlive(pid)) return pid;
   if (pid) clearPid();
   return 0;
+}
+
+export function fallbackWakePath() {
+  return path.join(homeDir(), "wake.json");
+}
+
+export function loadFallbackWake() {
+  const wakeFile = fallbackWakePath();
+  if (!fs.existsSync(wakeFile)) return null;
+  try {
+    const cfg = JSON.parse(fs.readFileSync(wakeFile, "utf8"));
+    if (cfg.url && cfg.key) return { url: cfg.url, key: cfg.key };
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+export function resolveWakeForAccount(account) {
+  if (account?.wake?.url && account?.wake?.key) return account.wake;
+  return loadFallbackWake();
+}
+
+export function hasAccountWake(account) {
+  return Boolean(account?.wake?.url && account?.wake?.key);
+}
+
+export function saveStateSecure(next) {
+  saveState(next);
+  try {
+    fs.chmodSync(paths().state, 0o600);
+  } catch {
+    // ignore
+  }
 }

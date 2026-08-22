@@ -5,6 +5,7 @@ import {
   contextFor,
   emptyAccount,
   findAccount,
+  hasAccountWake,
   listAccounts,
   loadState,
   localTokenList,
@@ -12,6 +13,8 @@ import {
   peekInboxCount,
   rememberContext,
   resolveAccountForPeer,
+  requireAccount,
+  saveStateSecure,
   updateState,
   upsertAccount,
 } from "./store.js";
@@ -106,6 +109,7 @@ function accountSummary(account) {
     ilink_bot_id: account.ilinkBotId,
     ilink_user_id: account.ilinkUserId,
     logged_in: Boolean(account.token),
+    has_wake: hasAccountWake(account),
   };
 }
 
@@ -164,8 +168,11 @@ export async function loginWait(timeoutMs = 120_000, qrcodeArg) {
       });
       return {
         logged_in: true,
-        ...accountSummary(account),
+        account: accountSummary(account),
+        ilink_bot_id: account.ilinkBotId,
+        ilink_user_id: account.ilinkUserId,
         accounts: listAccounts(loadState()).map(accountSummary),
+        hint: "为该微信用户创建专属助手，在其助手下建 Routine「微信入站唤醒」，再 wechat_set_wake 绑定 webhook。",
       };
     }
     if (last.status === "binded_redirect" && last.bot_token) {
@@ -178,8 +185,11 @@ export async function loginWait(timeoutMs = 120_000, qrcodeArg) {
       return {
         logged_in: true,
         redirected: true,
-        ...accountSummary(account),
+        account: accountSummary(account),
+        ilink_bot_id: account.ilinkBotId,
+        ilink_user_id: account.ilinkUserId,
         accounts: listAccounts(loadState()).map(accountSummary),
+        hint: "为该微信用户创建专属助手，在其助手下建 Routine「微信入站唤醒」，再 wechat_set_wake 绑定 webhook。",
       };
     }
     if (last.status === "expired") {
@@ -517,5 +527,41 @@ export function statusPayload() {
     pending_qr_count: state.pendingQrs.length,
     allow_from: state.allowFrom,
     inbox: peekInboxCount(),
+  };
+}
+
+export async function probeWake(url, key) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      source: "grok-wechat",
+      probe: true,
+      count: 0,
+    }),
+  });
+  const text = await res.text();
+  return { status: res.status, body: text.slice(0, 180) };
+}
+
+export async function setAccountWake(ilink_bot_id, url, key) {
+  const state = loadState();
+  const account = requireAccount(state, { ilink_bot_id });
+  if (!url || !key) throw new Error("url 和 key 必填");
+  const probe = await probeWake(url, key);
+  updateState((s) => {
+    const hit = findAccount(s, { ilink_bot_id });
+    if (hit) hit.wake = { url, key };
+    return s;
+  });
+  saveStateSecure(loadState());
+  return {
+    ilink_bot_id: account.ilinkBotId,
+    ilink_user_id: account.ilinkUserId,
+    wake_configured: true,
+    probe,
   };
 }

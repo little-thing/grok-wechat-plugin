@@ -6,13 +6,14 @@ import {
   appendInbox,
   clearPid,
   drainInbox,
+  findAccount,
   isAllowed,
   listAccounts,
   loadState,
   monitorRunning,
-  homeDir,
   paths,
   removeAccount,
+  resolveWakeForAccount,
   updateState,
   writePid,
 } from "./store.js";
@@ -25,6 +26,7 @@ import {
   notifyStop,
   sendMedia,
   sendText,
+  setAccountWake,
   setTyping,
   statusPayload,
 } from "./ilink.js";
@@ -199,9 +201,22 @@ const tools = {
     handle: async ({ on, to_user_id, ilink_bot_id }) => ok(await setTyping(to_user_id, on, ilink_bot_id)),
   },
   wechat_start_monitor: {
-    description: "在本机后台启动长轮询，为每个已绑定账号拉取入站消息并 POST webhook 唤醒 agent。已在跑则直接返回。",
+    description: "在本机后台启动长轮询，为每个已绑定账号拉取入站消息并按账号 POST 对应 webhook。已在跑则直接返回。",
     inputSchema: { type: "object", properties: {} },
     handle: async () => ok(ensureMonitor()),
+  },
+  wechat_set_wake: {
+    description: "为指定已绑定微信账号保存专属 webhook（url + key）。入站只唤醒该账号对应的助手。保存后探测 Bearer。",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ilink_bot_id: { type: "string", description: "要配置 webhook 的已绑定账号 bot id" },
+        url: { type: "string", description: "该助手 Routine「微信入站唤醒」的 webhook 地址" },
+        key: { type: "string", description: "webhook 密钥" },
+      },
+      required: ["ilink_bot_id", "url", "key"],
+    },
+    handle: async ({ ilink_bot_id, url, key }) => ok(await setAccountWake(ilink_bot_id, url, key)),
   },
   wechat_stop_monitor: {
     description: "停止后台长轮询。",
@@ -336,40 +351,40 @@ function startMcp() {
 
 async function wakeAgent(messages, log) {
   if (!messages.length) return;
-  const wakeFile = `${homeDir()}/wake.json`;
-  if (!fs.existsSync(wakeFile)) {
-    log("wake skipped: no wake.json");
-    return;
+  const state = loadState();
+  const byBot = new Map();
+  for (const m of messages) {
+    const botId = m.ilink_bot_id || "";
+    if (!byBot.has(botId)) byBot.set(botId, []);
+    byBot.get(botId).push(m);
   }
-  let cfg;
-  try {
-    cfg = JSON.parse(fs.readFileSync(wakeFile, "utf8"));
-  } catch (err) {
-    log(`wake config error ${err instanceof Error ? err.message : String(err)}`);
-    return;
-  }
-  if (!cfg.url || !cfg.key) {
-    log("wake skipped: url/key missing");
-    return;
-  }
-  try {
-    const res = await fetch(cfg.url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${cfg.key}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        source: "grok-wechat",
-        count: messages.length,
-        from_user_ids: messages.map((m) => m.from_user_id),
-        ilink_bot_ids: [...new Set(messages.map((m) => m.ilink_bot_id).filter(Boolean))],
-      }),
-    });
-    const text = await res.text();
-    log(`wake ${res.status} ${text.slice(0, 180)}`);
-  } catch (err) {
-    log(`wake error ${err instanceof Error ? err.message : String(err)}`);
+  for (const [botId, batch] of byBot) {
+    const account = findAccount(state, { ilink_bot_id: botId });
+    const cfg = resolveWakeForAccount(account);
+    if (!cfg) {
+      log(`wake skipped bot=${botId}: no wake config`);
+      continue;
+    }
+    try {
+      const res = await fetch(cfg.url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${cfg.key}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          source: "grok-wechat",
+          count: batch.length,
+          from_user_ids: batch.map((m) => m.from_user_id),
+          ilink_bot_id: botId,
+          ilink_user_id: account?.ilinkUserId || batch[0]?.ilink_user_id || "",
+        }),
+      });
+      const text = await res.text();
+      log(`wake bot=${botId} ${res.status} ${text.slice(0, 180)}`);
+    } catch (err) {
+      log(`wake error bot=${botId} ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 }
 
