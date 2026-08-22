@@ -30,6 +30,7 @@ import {
   setTyping,
   statusPayload,
 } from "./ilink.js";
+import { uninstallWechat } from "./uninstall.js";
 
 const self = fileURLToPath(import.meta.url);
 
@@ -247,6 +248,11 @@ const tools = {
       return ok({ allow_from: state.allowFrom });
     },
   },
+  wechat_uninstall: {
+    description: "完整卸载本机微信渠道：停止 monitor、删除插件目录与状态目录（GROK_WECHAT_HOME / ~/.grok-wechat），并返回平台侧清理清单。",
+    inputSchema: { type: "object", properties: {} },
+    handle: async () => ok(uninstallWechat()),
+  },
 };
 
 const TOOL_LIST = Object.entries(tools).map(([name, t]) => ({
@@ -448,6 +454,8 @@ if (process.argv.includes("--monitor")) {
   runMonitor();
 } else if (process.argv.includes("--ensure-monitor")) {
   process.stdout.write(JSON.stringify(ensureMonitor()) + "\n");
+} else if (process.argv.includes("--uninstall")) {
+  process.stdout.write(`${JSON.stringify(uninstallWechat(), null, 2)}\n`);
 } else {
   startMcp();
 }

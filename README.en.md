@@ -54,4 +54,10 @@ See `skills/wechat-channel/SKILL.md` for install details.
 
 ## Uninstall
 
-Tell Grok Bot to uninstall the WeChat plugin.
+Tell Grok Bot to uninstall the WeChat plugin. The assistant will:
+
+1. Call `wechat_uninstall` (or run `scripts/uninstall.sh`) to stop the monitor and remove the plugin directory and `~/.grok-wechat` state.
+2. Remove the `grok-wechat` connector from Settings.
+3. Delete Routine「微信入站唤醒」and「微信监听保活」on every assistant; dedicated assistants created per QR bind get their WeChat routines removed too.
+
+After that: no plugin files, no state, no monitor process, and no connector or WeChat routines on the platform.
