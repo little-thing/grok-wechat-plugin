@@ -2,7 +2,17 @@
 
 [中文](README.md) | [English](README.en.md)
 
-WeChat iLink channel for Grok Bot. Inbound messages wake the agent via webhook.
+WeChat iLink channel for Grok Bot. After QR bind, DMs wake the matching dedicated assistant via a shared webhook. The assistant can reply with text or media and show a typing indicator.
+
+## Capabilities
+
+- **QR login**, one connector binds multiple WeChat personal accounts; each account gets a dedicated Grok Bot assistant
+- **DM text**: Markdown is flattened to plain text; long messages are split automatically
+- **Voice**: handled as transcription text
+- **Media**: receive and send images, videos, and files (inbound media is saved locally)
+- **Typing**: turn on before a reply, off after send
+- **Allowlist**: empty means accept every DM; once set, only listed users are handled
+- **Global webhook**: paste once; it covers every current and future bound account
 
 ## One-line install
 
@@ -38,15 +48,19 @@ Talk in WeChat as usual:
 
 ![Send a WeChat DM and get a reply](docs/bind-effect.png)
 
+The assistant can show typing while it works. Text, voice transcriptions, images, videos, and files are all handled; outbound media uses a local file path on the Grok Bot machine.
+
+To restrict who can talk, have the assistant add them to the allowlist. To unbind one number, ask to log that WeChat account out; omit the account to log all of them out.
+
 ## Multiple accounts
 
 One connector binds multiple WeChat personal accounts. One global webhook covers all of them; each new bind gets its own QR scan and dedicated assistant. `wechat_status` shows `global_wake_configured` and per-account dedicated assistant names.
 
 ## Flow
 
-WeChat DM → monitor inbox → POST shared webhook → installing assistant wakes → `wechat_inbox` → forward by `ilink_bot_id` to dedicated assistant → `wechat_send`
+WeChat DM → monitor inbox → POST shared webhook → installing assistant wakes → `wechat_inbox` → forward by `ilink_bot_id` to dedicated assistant → `wechat_send` / `wechat_send_media`
 
-After a task finishes, call `wechat_send`.
+After a task finishes, reply immediately.
 
 `bot_agent` is `Grokbot/1.0.0`.
 
@@ -67,4 +81,4 @@ The installing assistant will:
 3. Delete Routine「微信入站唤醒」and「微信监听保活」on the installing assistant, and remove any leftover copies on other assistants.
 4. Tell the user to right-click → Delete the dedicated assistants listed in the uninstall response (e.g. 微信1, 微信2) in the sidebar.
 
-After a clean uninstall, reinstall requires a fresh webhook paste and QR scan; `wechat_status` shows zero accounts.
+Removing the connector from Settings also triggers local monitor cleanup. After a clean uninstall, reinstall requires a fresh webhook paste and QR scan; `wechat_status` shows zero accounts.

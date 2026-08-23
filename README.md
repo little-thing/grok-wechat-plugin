@@ -2,7 +2,17 @@
 
 [中文](README.md) | [English](README.en.md)
 
-Grok Bot 的微信 iLink 渠道。入站消息经 webhook 唤醒 agent。
+Grok Bot 的微信 iLink 渠道。扫码绑定个人号后，私信经共享 webhook 唤醒对应专属助手，可回文字与媒体，并显示正在输入。
+
+## 能力
+
+- **扫码登录**，一个连接器绑定多个微信个人号；每号一个专属 Grok Bot 助手
+- **私信文字收发**：Markdown 自动转纯文本，超长消息自动分段
+- **语音**：按转写文本处理
+- **媒体**：收发图片、视频、文件（入站媒体下载到本机）
+- **正在输入**：回复前打开，发完关闭
+- **allowlist**：空则接收全部私信；写入后只处理名单内用户
+- **全局 webhook**：粘贴一次，覆盖当前及后续全部已绑定账号
 
 ## 一句话安装
 
@@ -38,17 +48,19 @@ Grok Bot 的微信 iLink 渠道。入站消息经 webhook 唤醒 agent。
 
 ![微信里发私信，助手立刻回复](docs/bind-effect.png)
 
+回复前可显示「正在输入」。文字、语音转写、图片、视频、文件都可处理；回媒体时用本机文件路径。
+
+要限制谁能对话，让助手把对方加入 allowlist。要解绑某个号，在对话里说登出该微信；不指定则登出全部。
+
 ## 多账号
 
 一个连接器可绑定多个微信个人号。全局 webhook 覆盖全部账号；每个号独立扫码并创建专属助手。`wechat_status` 查看 `global_wake_configured` 与各账号专属助手名称。
 
 ## 链路
 
-微信私信 → monitor 收件箱 → POST 共享 webhook → 安装助手醒来 → `wechat_inbox` → 按 `ilink_bot_id` 转交专属助手 → `wechat_send`
+微信私信 → monitor 收件箱 → POST 共享 webhook → 安装助手醒来 → `wechat_inbox` → 按 `ilink_bot_id` 转交专属助手 → `wechat_send` / `wechat_send_media`
 
-任务做完立刻 `wechat_send`。
-
-`bot_agent` 为 `Grokbot/1.0.0`。
+任务做完立刻回复。`bot_agent` 为 `Grokbot/1.0.0`。
 
 安装细节见 `skills/wechat-channel/SKILL.md`。
 
@@ -67,4 +79,4 @@ Grok Bot 的微信 iLink 渠道。入站消息经 webhook 唤醒 agent。
 3. 删除安装助手上 Routine「微信入站唤醒」与「微信监听保活」，并删除其他助手上残留的同名 Routine。
 4. 告知用户在侧栏右键删除返回列表中的专属助手（如「微信1」「微信2」）。
 
-完成后重装需重新粘贴 webhook 并扫码，`wechat_status` 为零账号。
+从 Settings 卸掉连接器后，本机 monitor 也会自动清理。完成后重装需重新粘贴 webhook 并扫码，`wechat_status` 为零账号。

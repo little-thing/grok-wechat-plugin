@@ -1,14 +1,14 @@
 ---
 name: 微信渠道
-description: 用户要在 Grok Bot 里安装、登录、收发或卸载微信 iLink 渠道时使用。入站用 webhook 唤醒。
+description: 用户要在 Grok Bot 里安装、登录、收发、登出或卸载微信 iLink 渠道时使用。入站用 webhook 唤醒。支持文字、语音转写、图片/视频/文件与正在输入。
 ---
 # 微信渠道
 
 通过 MCP `grok-wechat` 连接微信个人号。底层是腾讯 iLink（`ilinkai.weixin.qq.com`）。
 
-`微信私信 → monitor 收件箱 → POST 共享 webhook → 安装助手醒来 → wechat_inbox → 按 ilink_bot_id 转交专属助手 → wechat_send`
+`微信私信 → monitor 收件箱 → POST 共享 webhook → 安装助手醒来 → wechat_inbox → 按 ilink_bot_id 转交专属助手 → wechat_send / wechat_send_media`
 
-任务做完或需要用户拍板：立刻 `wechat_send`。
+任务做完或需要用户拍板：立刻回复。回复前 `wechat_typing`（on），发完关闭。
 
 `base_info.bot_agent = Grokbot/1.0.0`。连接页显示 Grokbot。微信里的「ClawBot」是腾讯产品名。
 
@@ -22,7 +22,7 @@ description: 用户要在 Grok Bot 里安装、登录、收发或卸载微信 iL
 
 1. **连接器** `grok-wechat`，入口 `server/index.js`。用户若需确认则点「加」添加连接器。
 2. **插件文件**落在 Grok Bot 电脑（`/home/box/grok-wechat-plugin`）。
-3. **monitor 自启**：用户登录或 MCP `initialize` 时调用 `wechat_start_monitor` 拉起后台长轮询。
+3. **monitor 自启**：用户登录或 MCP `initialize` 时调用 `wechat_start_monitor` 拉起后台长轮询。已绑定账号时，每个账号独立长轮询入站。
 4. **安装助手**创建两条 Routine（全渠道共用，只建一次）：
    - **「微信入站唤醒」**（webhook）：入站后 `wechat_inbox` → 按 `ilink_bot_id` 转交专属助手
    - **「微信监听保活」**：每 5 分钟，提示词 `只调用 wechat_start_monitor，确保微信入站监听在跑。除此之外什么都不要做。`
@@ -39,15 +39,41 @@ description: 用户要在 Grok Bot 里安装、登录、收发或卸载微信 iL
 
 多账号：每扫一个新码重复步骤 1–5；全局 webhook 覆盖全部已绑定号。`wechat_status` 列出 `global_wake_configured`、各账号 `has_wake` 与 `dedicated_assistant_name`。
 
-stdio 用换行分隔 JSON（MCP 2025-11-25）。
+stdio 支持换行分隔 JSON 与 Content-Length 分帧。
+
+## 工具
+
+| 工具 | 职责 |
+|---|---|
+| `wechat_login_start` | 出码并展示给用户，下一步立即 `wechat_login_wait` |
+| `wechat_login_wait` | 轮询扫码；`logged_in=true` 时拉起 monitor；`expired=true` 时重新出码 |
+| `wechat_set_wake` | 保存全局 webhook（url、key 必填）。可选 `ilink_bot_id` 同时写入该账号 |
+| `wechat_set_dedicated_assistant` | 为已绑定账号登记专属助手 `assistant_id` / `assistant_name` |
+| `wechat_status` | 账号列表、`global_wake_configured`、各号专属助手 / peers、allowlist、inbox、monitor |
+| `wechat_inbox` | 立即取出 monitor 缓存的入站消息（取出后清空） |
+| `wechat_send` | 发文本。必填 `text`、`to_user_id`；多账号时带同一 `ilink_bot_id`。Markdown 转纯文本，超 4000 字自动分段 |
+| `wechat_send_media` | 发图片/视频/文件。必填本机 `path`、`kind`（`image` / `video` / `file`）、`to_user_id`；可选 `caption` |
+| `wechat_typing` | 发送或取消「正在输入」。必填 `on`、`to_user_id` |
+| `wechat_start_monitor` | 后台长轮询各已绑定账号，入站按账号 POST webhook |
+| `wechat_stop_monitor` | 停止后台长轮询 |
+| `wechat_approve` | `user_id` 加入 allowlist；`clear=true` 清空后接收全部私信。空列表表示接收全部 |
+| `wechat_logout` | 默认登出全部并停 monitor；传入 `ilink_bot_id` 只登出一个 |
+| `wechat_uninstall` | 本机完整清理，返回 `platform_cleanup` 与 `dedicated_assistants_sidebar_delete` |
 
 ## 入站之后
 
-共享入站助手被 webhook 唤醒后 `wechat_inbox`。每条消息含 `ilink_bot_id`、`from_user_id`。按 `ilink_bot_id` 转交对应专属助手；回复时用同一 `ilink_bot_id` 调用 `wechat_send` / `wechat_typing` / `wechat_send_media`。语音按转写文本处理。
+共享入站助手被 webhook 唤醒后 `wechat_inbox`。每条消息含：
+
+- `ilink_bot_id` / `ilink_user_id`：本机已绑定账号
+- `from_user_id`：对端
+- `text`：文字、语音转写、引用标题（`引用: …`）拼成的纯文本
+- `items`：`text` / `voice` / `image` / `video` / `file`；媒体已下载到本机 `~/.grok-wechat/media`，带 `path`
+
+按 `ilink_bot_id` 转交对应专属助手。回复时用同一 `ilink_bot_id` 调用 `wechat_send` / `wechat_typing` / `wechat_send_media`。语音按转写文本处理；图片/视频/文件用本机路径回发。
 
 ## 协议
 
-只处理私信。回复依赖 context_token。文字和语音转写都当文本，用 `wechat_send` 回文字。
+只处理私信（`message_type=USER` 且 `message_state=FINISH`）。回复依赖对方先发过消息留下的 context_token。文字和语音转写都当文本，用 `wechat_send` 回文字。
 
 ## 卸载
 
@@ -67,7 +93,7 @@ stdio 用换行分隔 JSON（MCP 2025-11-25）。
 - 删除 `/home/box/grok-wechat-plugin` 与 `GROK_WECHAT_HOME` / `/home/box/.grok-wechat`（含 `account.json`、`wake.json`、token、inbox、media、pid、log、`ensure-monitor.sh`）
 - 清理 crontab 与 shell 自启项
 
-返回 `dedicated_assistants_sidebar_delete`（绑定期间登记的专属助手名称）。
+返回 `dedicated_assistants_sidebar_delete`（绑定期间登记的专属助手名称）。从 Settings 卸掉连接器后，monitor 也会自动完成本机清理。
 
 ### 2. 平台清理（安装助手执行）
 
