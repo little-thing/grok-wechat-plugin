@@ -8,7 +8,7 @@ description: 用户要在 Grok Bot 里安装、登录、收发、登出或卸载
 
 `微信私信 → monitor 收件箱 → POST 共享 webhook → 安装助手醒来 → wechat_inbox → 按 ilink_bot_id 转交专属助手 → wechat_send / wechat_send_media`
 
-任务做完或需要用户拍板：立刻回复。回复前 `wechat_typing`（on），发完关闭。
+monitor 在即将 POST webhook 时对该发送者打开「正在输入」（每批每个发送者一次，失败只记日志）。任务做完或需要用户拍板：立刻回复。回复前仍 `wechat_typing`（on），发完关闭。
 
 `base_info.bot_agent = Grokbot/1.0.0`。连接页显示 Grokbot。微信里的「ClawBot」是腾讯产品名。
 
