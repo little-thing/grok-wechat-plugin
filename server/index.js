@@ -390,6 +390,12 @@ async function wakeAgent(messages, log) {
       log(`wake skipped bot=${botId}: no wake config`);
       continue;
     }
+    // 入站即显示「正在输入」，不等被唤醒的助手；不阻塞 webhook，失败只记日志
+    for (const to of new Set(batch.map((m) => m.from_user_id).filter(Boolean))) {
+      setTyping(to, true, botId).then(() => log(`typing on bot=${botId} to=${to}`), (err) => {
+        log(`typing error bot=${botId} to=${to} ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
     try {
       const res = await fetch(cfg.url, {
         method: "POST",

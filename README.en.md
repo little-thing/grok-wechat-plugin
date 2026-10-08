@@ -10,7 +10,7 @@ WeChat iLink channel for Grok Bot. After QR bind, DMs wake the matching dedicate
 - **DM text**: Markdown is flattened to plain text; long messages are split automatically
 - **Voice**: handled as transcription text
 - **Media**: receive and send images, videos, and files (inbound media is saved locally)
-- **Typing**: turn on before a reply, off after send
+- **Typing**: the monitor turns it on when an inbound DM will wake the assistant; the assistant still turns it on before a reply and off after send
 - **Allowlist**: empty means accept every DM; once set, only listed users are handled
 - **Global webhook**: paste once; it covers every current and future bound account
 
@@ -48,7 +48,7 @@ Talk in WeChat as usual:
 
 ![Send a WeChat DM and get a reply](docs/bind-effect.png)
 
-The assistant can show typing while it works. Text, voice transcriptions, images, videos, and files are all handled; outbound media uses a local file path on the Grok Bot machine.
+Typing appears as soon as the monitor receives a DM that will wake the assistant. The assistant still turns it on before a reply and off after send. Text, voice transcriptions, images, videos, and files are all handled; outbound media uses a local file path on the Grok Bot machine.
 
 To restrict who can talk, have the assistant add them to the allowlist. To unbind one number, ask to log that WeChat account out; omit the account to log all of them out.
 
