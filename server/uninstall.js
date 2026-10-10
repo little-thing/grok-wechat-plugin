@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { clearPid, homeDir, listAccounts, loadState, monitorRunning, readPid } from "./store.js";
+import { clearPid, getSharedAssistant, homeDir, listAccounts, loadState, monitorRunning, readPid } from "./store.js";
 
 const PLUGIN_DIR_NAMES = ["grok-wechat-plugin"];
 const GROK_BOX_HOME = "/home/box";
@@ -242,13 +242,30 @@ export function registerShutdownCleanup() {
 }
 
 function collectDedicatedAssistants() {
-  return listAccounts(loadState())
-    .map((a) => ({
+  const shared = getSharedAssistant();
+  if (shared?.name || shared?.id) {
+    return [{
+      ilink_bot_id: "",
+      assistant_id: shared.id || "",
+      assistant_name: shared.name || "",
+    }];
+  }
+  const seen = new Set();
+  const out = [];
+  for (const a of listAccounts(loadState())) {
+    const name = a.dedicatedAssistant?.name || "";
+    const id = a.dedicatedAssistant?.id || "";
+    if (!name && !id) continue;
+    const key = `${id}::${name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
       ilink_bot_id: a.ilinkBotId,
-      assistant_id: a.dedicatedAssistant?.id || "",
-      assistant_name: a.dedicatedAssistant?.name || "",
-    }))
-    .filter((a) => a.assistant_id || a.assistant_name);
+      assistant_id: id,
+      assistant_name: name,
+    });
+  }
+  return out;
 }
 
 function platformCleanup(dedicatedAssistants) {

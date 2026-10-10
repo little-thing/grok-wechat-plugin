@@ -4,9 +4,12 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   appendInbox,
+  appendTalk,
   clearPid,
   drainInbox,
   findAccount,
+  getSharedAssistant,
+  getTalkHistory,
   isAllowed,
   listAccounts,
   loadState,
@@ -14,6 +17,7 @@ import {
   paths,
   removeAccount,
   resolveWakeForAccount,
+  talkKey,
   updateState,
   writePid,
 } from "./store.js";
@@ -156,9 +160,18 @@ const tools = {
     },
   },
   wechat_inbox: {
-    description: "立即取出 monitor 缓存的入站消息（取出后清空）。每条消息带 ilink_bot_id，回复时用同一账号。",
+    description: "立即取出 monitor 缓存的入站消息（取出后清空）。每条含 ilink_bot_id、session_id、history（该微信对端在同一 Grok 会话中的既往对话）、shared_assistant_*。回复时用同一账号；结合 history 保持上下文，始终转交同一 shared 助手。",
     inputSchema: { type: "object", properties: {} },
-    handle: async () => ok({ messages: drainInbox(), from_monitor: true }),
+    handle: async () => {
+      const shared = getSharedAssistant();
+      return ok({
+        messages: drainInbox(),
+        from_monitor: true,
+        shared_assistant: shared,
+        single_session: true,
+        hint: "始终转交 shared_assistant；用每条消息的 history 作为同一会话上下文，不要新建助手或新开对话。",
+      });
+    },
   },
   wechat_send: {
     description: "向微信用户发文本。必须带该用户已缓存的 context_token（对方先发过消息）。Markdown 会转成纯文本。",
@@ -190,7 +203,7 @@ const tools = {
       ok(await sendMedia(to_user_id, path, kind, caption, ilink_bot_id)),
   },
   wechat_typing: {
-    description: "发送或取消「正在输入」。回复前先打开，发完后关闭。",
+    description: "发送或取消「正在输入」。monitor 在成功收到私信后会自动打开；发完后 wechat_send / wechat_send_media 会自动关闭。仍可手动调用。",
     inputSchema: {
       type: "object",
       properties: {
@@ -221,15 +234,15 @@ const tools = {
     handle: async ({ ilink_bot_id, url, key }) => ok(await setAccountWake(ilink_bot_id, url, key)),
   },
   wechat_set_dedicated_assistant: {
-    description: "为已绑定微信账号登记专属 Grok Bot 助手 id/名称。每次扫码绑定成功后创建专属助手并调用，供入站按 ilink_bot_id 转交与卸载侧栏列表。",
+    description: "登记全渠道共用的唯一 Grok Bot 助手（single session）。只创建一次名为「微信」的助手并调用；后续扫码绑定复用，勿再新建，以便所有私信共享会话上下文。可选 ilink_bot_id。",
     inputSchema: {
       type: "object",
       properties: {
-        ilink_bot_id: { type: "string", description: "已绑定账号 bot id" },
-        assistant_id: { type: "string", description: "专属助手 id" },
-        assistant_name: { type: "string", description: "专属助手侧栏名称（如「微信1」）" },
+        ilink_bot_id: { type: "string", description: "可选，同时写入该已绑定账号" },
+        assistant_id: { type: "string", description: "共享助手 id" },
+        assistant_name: { type: "string", description: "共享助手侧栏名称（建议「微信」）" },
       },
-      required: ["ilink_bot_id", "assistant_name"],
+      required: ["assistant_name"],
     },
     handle: async ({ ilink_bot_id, assistant_id, assistant_name }) =>
       ok(setDedicatedAssistant(ilink_bot_id, assistant_id, assistant_name)),
@@ -308,7 +321,7 @@ async function onRpc(msg) {
       result: {
         protocolVersion: params?.protocolVersion || "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "grok-wechat", version: "1.0.0" },
+        serverInfo: { name: "grok-wechat", version: "1.1.0" },
       },
     };
   }
@@ -374,9 +387,52 @@ function startMcp() {
 }
 
 
+async function startTypingForInbound(messages, log) {
+  const seen = new Set();
+  for (const m of messages) {
+    const peer = m.from_user_id;
+    const botId = m.ilink_bot_id || "";
+    if (!peer) continue;
+    const key = `${botId}::${peer}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    try {
+      await setTyping(peer, true, botId || undefined);
+      log(`typing on peer=${peer} bot=${botId}`);
+    } catch (err) {
+      log(`typing error peer=${peer} ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+}
+
+function stampSessionContext(messages) {
+  const shared = getSharedAssistant();
+  for (const m of messages) {
+    m.session_id = m.session_id || talkKey(m.ilink_bot_id, m.from_user_id);
+    m.shared_assistant_id = shared?.id || m.dedicated_assistant_id || "";
+    m.shared_assistant_name = shared?.name || m.dedicated_assistant_name || "";
+    // Prior turns only — current inbound is recorded after this stamp.
+    m.history = getTalkHistory(m.ilink_bot_id, m.from_user_id);
+  }
+}
+
+function recordInboundTalks(messages) {
+  for (const m of messages) {
+    appendTalk({
+      ilink_bot_id: m.ilink_bot_id,
+      from_user_id: m.from_user_id,
+      role: "user",
+      text: m.text,
+      items: m.items,
+      at: m.create_time_ms || Date.now(),
+    });
+  }
+}
+
 async function wakeAgent(messages, log) {
   if (!messages.length) return;
   const state = loadState();
+  const shared = getSharedAssistant(state);
   const byBot = new Map();
   for (const m of messages) {
     const botId = m.ilink_bot_id || "";
@@ -401,8 +457,13 @@ async function wakeAgent(messages, log) {
           source: "grok-wechat",
           count: batch.length,
           from_user_ids: batch.map((m) => m.from_user_id),
+          session_ids: batch.map((m) => m.session_id || `${botId}::${m.from_user_id}`),
           ilink_bot_id: botId,
           ilink_user_id: account?.ilinkUserId || batch[0]?.ilink_user_id || "",
+          shared_assistant_id: shared?.id || "",
+          shared_assistant_name: shared?.name || "",
+          single_session: true,
+          reuse_session: true,
         }),
       });
       const text = await res.text();
@@ -462,8 +523,12 @@ async function runMonitor() {
         await sleep(60_000);
       }
       if (batch.length) {
+        stampSessionContext(batch);
+        recordInboundTalks(batch);
         appendInbox(batch);
         log(`inbox +${batch.length}`);
+        // Show「正在输入」as soon as the bot has accepted the message.
+        await startTypingForInbound(batch, log);
         await wakeAgent(batch, log);
       }
     } catch (err) {

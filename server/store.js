@@ -42,7 +42,106 @@ export function emptyState() {
     accounts: [],
     pendingQrs: [],
     allowFrom: [],
+    /** One shared Grok Bot assistant for all WeChat talks (keeps chat context). */
+    sharedAssistant: null,
   };
+}
+
+const MAX_TALK_TURNS = 80;
+
+export function talkKey(ilinkBotId, fromUserId) {
+  return `${ilinkBotId || ""}::${fromUserId || ""}`;
+}
+
+function talksPath() {
+  return path.join(homeDir(), "talks.json");
+}
+
+export function loadTalks() {
+  ensureHome();
+  const file = talksPath();
+  if (!fs.existsSync(file)) return {};
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+    return raw && typeof raw === "object" ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveTalks(talks) {
+  ensureHome();
+  const file = talksPath();
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(talks, null, 2));
+  fs.renameSync(tmp, file);
+  try {
+    fs.chmodSync(file, 0o600);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Append a turn to the shared Grok-session talk log for a WeChat peer.
+ * role: "user" | "assistant"
+ */
+export function appendTalk({ ilink_bot_id, from_user_id, role, text, items, at } = {}) {
+  if (!from_user_id || !role) return [];
+  const key = talkKey(ilink_bot_id, from_user_id);
+  const talks = loadTalks();
+  const entry = {
+    role,
+    text: String(text || "").slice(0, 8000),
+    at: at || Date.now(),
+  };
+  if (items?.length) entry.items = items;
+  const list = Array.isArray(talks[key]) ? talks[key] : [];
+  list.push(entry);
+  talks[key] = list.slice(-MAX_TALK_TURNS);
+  saveTalks(talks);
+  return talks[key];
+}
+
+export function getTalkHistory(ilink_bot_id, from_user_id, limit = 40) {
+  if (!from_user_id) return [];
+  const list = loadTalks()[talkKey(ilink_bot_id, from_user_id)] || [];
+  const n = Math.max(1, Math.min(Number(limit) || 40, MAX_TALK_TURNS));
+  return list.slice(-n);
+}
+
+export function getSharedAssistant(state = loadState()) {
+  if (state.sharedAssistant?.name || state.sharedAssistant?.id) {
+    return {
+      id: state.sharedAssistant.id || "",
+      name: state.sharedAssistant.name || "",
+    };
+  }
+  for (const a of listAccounts(state)) {
+    if (a.dedicatedAssistant?.name || a.dedicatedAssistant?.id) {
+      return {
+        id: a.dedicatedAssistant.id || "",
+        name: a.dedicatedAssistant.name || "",
+      };
+    }
+  }
+  return null;
+}
+
+export function setSharedAssistant(assistant_id, assistant_name) {
+  if (!assistant_name) throw new Error("assistant_name 必填");
+  updateState((s) => {
+    s.sharedAssistant = {
+      id: assistant_id || s.sharedAssistant?.id || "",
+      name: assistant_name,
+    };
+    // Keep per-account fields in sync so older status/uninstall paths still work.
+    for (const a of s.accounts) {
+      a.dedicatedAssistant = { ...s.sharedAssistant };
+    }
+    return s;
+  });
+  return getSharedAssistant();
 }
 
 function ensureHome() {
@@ -79,7 +178,17 @@ export function loadState() {
   if (!fs.existsSync(state)) return emptyState();
   try {
     const raw = JSON.parse(fs.readFileSync(state, "utf8"));
-    return { ...emptyState(), ...migrateLegacyState(raw) };
+    const migrated = { ...emptyState(), ...migrateLegacyState(raw) };
+    if (!migrated.sharedAssistant?.name) {
+      const fromAccount = migrated.accounts.find((a) => a.dedicatedAssistant?.name);
+      if (fromAccount?.dedicatedAssistant) {
+        migrated.sharedAssistant = {
+          id: fromAccount.dedicatedAssistant.id || "",
+          name: fromAccount.dedicatedAssistant.name || "",
+        };
+      }
+    }
+    return migrated;
   } catch {
     return emptyState();
   }
@@ -210,6 +319,7 @@ export function drainInbox() {
   if (!fs.existsSync(inbox)) return [];
   const raw = fs.readFileSync(inbox, "utf8");
   fs.writeFileSync(inbox, "");
+  const shared = getSharedAssistant();
   return raw
     .split("\n")
     .map((line) => line.trim())
@@ -221,7 +331,17 @@ export function drainInbox() {
         return null;
       }
     })
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((msg) => ({
+      ...msg,
+      session_id: msg.session_id || talkKey(msg.ilink_bot_id, msg.from_user_id),
+      shared_assistant_id: shared?.id || msg.dedicated_assistant_id || msg.shared_assistant_id || "",
+      shared_assistant_name: shared?.name || msg.dedicated_assistant_name || msg.shared_assistant_name || "",
+      // Prefer history stamped before the current turn was recorded.
+      history: Array.isArray(msg.history)
+        ? msg.history
+        : getTalkHistory(msg.ilink_bot_id, msg.from_user_id),
+    }));
 }
 
 export function peekInboxCount() {
