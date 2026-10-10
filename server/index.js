@@ -8,7 +8,7 @@ import {
   clearPid,
   drainInbox,
   findAccount,
-  getSharedAssistant,
+  getAccountAssistant,
   getTalkHistory,
   isAllowed,
   listAccounts,
@@ -160,18 +160,13 @@ const tools = {
     },
   },
   wechat_inbox: {
-    description: "立即取出 monitor 缓存的入站消息（取出后清空）。每条含 ilink_bot_id、session_id、history（该微信对端在同一 Grok 会话中的既往对话）、shared_assistant_*。回复时用同一账号；结合 history 保持上下文，始终转交同一 shared 助手。",
+    description: "立即取出 monitor 缓存的入站消息（取出后清空）。每条含 ilink_bot_id、session_id、history、dedicated_assistant_*。按 ilink_bot_id 转交该账号专属助手；结合 history 在该助手会话内保持上下文。",
     inputSchema: { type: "object", properties: {} },
-    handle: async () => {
-      const shared = getSharedAssistant();
-      return ok({
-        messages: drainInbox(),
-        from_monitor: true,
-        shared_assistant: shared,
-        single_session: true,
-        hint: "始终转交 shared_assistant；用每条消息的 history 作为同一会话上下文，不要新建助手或新开对话。",
-      });
-    },
+    handle: async () => ok({
+      messages: drainInbox(),
+      from_monitor: true,
+      hint: "按 ilink_bot_id 转交对应 dedicated_assistant；用 history 续写该账号助手会话，勿为同一账号新建助手。",
+    }),
   },
   wechat_send: {
     description: "向微信用户发文本。必须带该用户已缓存的 context_token（对方先发过消息）。Markdown 会转成纯文本。",
@@ -234,15 +229,15 @@ const tools = {
     handle: async ({ ilink_bot_id, url, key }) => ok(await setAccountWake(ilink_bot_id, url, key)),
   },
   wechat_set_dedicated_assistant: {
-    description: "登记全渠道共用的唯一 Grok Bot 助手（single session）。只创建一次名为「微信」的助手并调用；后续扫码绑定复用，勿再新建，以便所有私信共享会话上下文。可选 ilink_bot_id。",
+    description: "为已绑定微信账号登记专属 Grok Bot 助手（每账号一个）。每次扫码绑定成功后创建该号专属助手并调用；该助手内用 history 保持会话上下文。",
     inputSchema: {
       type: "object",
       properties: {
-        ilink_bot_id: { type: "string", description: "可选，同时写入该已绑定账号" },
-        assistant_id: { type: "string", description: "共享助手 id" },
-        assistant_name: { type: "string", description: "共享助手侧栏名称（建议「微信」）" },
+        ilink_bot_id: { type: "string", description: "已绑定账号 bot id" },
+        assistant_id: { type: "string", description: "专属助手 id" },
+        assistant_name: { type: "string", description: "专属助手侧栏名称（如「微信1」）" },
       },
-      required: ["assistant_name"],
+      required: ["ilink_bot_id", "assistant_name"],
     },
     handle: async ({ ilink_bot_id, assistant_id, assistant_name }) =>
       ok(setDedicatedAssistant(ilink_bot_id, assistant_id, assistant_name)),
@@ -406,11 +401,12 @@ async function startTypingForInbound(messages, log) {
 }
 
 function stampSessionContext(messages) {
-  const shared = getSharedAssistant();
+  const state = loadState();
   for (const m of messages) {
+    const dedicated = getAccountAssistant(state, m.ilink_bot_id);
     m.session_id = m.session_id || talkKey(m.ilink_bot_id, m.from_user_id);
-    m.shared_assistant_id = shared?.id || m.dedicated_assistant_id || "";
-    m.shared_assistant_name = shared?.name || m.dedicated_assistant_name || "";
+    m.dedicated_assistant_id = dedicated?.id || m.dedicated_assistant_id || "";
+    m.dedicated_assistant_name = dedicated?.name || m.dedicated_assistant_name || "";
     // Prior turns only — current inbound is recorded after this stamp.
     m.history = getTalkHistory(m.ilink_bot_id, m.from_user_id);
   }
@@ -432,7 +428,6 @@ function recordInboundTalks(messages) {
 async function wakeAgent(messages, log) {
   if (!messages.length) return;
   const state = loadState();
-  const shared = getSharedAssistant(state);
   const byBot = new Map();
   for (const m of messages) {
     const botId = m.ilink_bot_id || "";
@@ -446,6 +441,7 @@ async function wakeAgent(messages, log) {
       log(`wake skipped bot=${botId}: no wake config`);
       continue;
     }
+    const dedicated = getAccountAssistant(state, botId);
     try {
       const res = await fetch(cfg.url, {
         method: "POST",
@@ -460,9 +456,9 @@ async function wakeAgent(messages, log) {
           session_ids: batch.map((m) => m.session_id || `${botId}::${m.from_user_id}`),
           ilink_bot_id: botId,
           ilink_user_id: account?.ilinkUserId || batch[0]?.ilink_user_id || "",
-          shared_assistant_id: shared?.id || "",
-          shared_assistant_name: shared?.name || "",
-          single_session: true,
+          dedicated_assistant_id: dedicated?.id || account?.dedicatedAssistant?.id || "",
+          dedicated_assistant_name: dedicated?.name || account?.dedicatedAssistant?.name || "",
+          per_account_session: true,
           reuse_session: true,
         }),
       });

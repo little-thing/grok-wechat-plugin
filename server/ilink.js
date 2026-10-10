@@ -6,7 +6,6 @@ import {
   contextFor,
   emptyAccount,
   findAccount,
-  getSharedAssistant,
   hasAccountWake,
   hasGlobalWake,
   listAccounts,
@@ -15,10 +14,10 @@ import {
   paths,
   peekInboxCount,
   rememberContext,
+  requireAccount,
   resolveAccountForPeer,
   saveGlobalWake,
   saveStateSecure,
-  setSharedAssistant as persistSharedAssistant,
   updateState,
   upsertAccount,
 } from "./store.js";
@@ -120,14 +119,12 @@ function accountSummary(account) {
 }
 
 function applyLoginConfirm(state, last) {
-  const shared = getSharedAssistant(state);
   const account = {
     ...emptyAccount(),
     token: last.bot_token,
     ilinkBotId: last.ilink_bot_id || "",
     ilinkUserId: last.ilink_user_id || "",
     baseUrl: last.baseurl || state.accounts[0]?.baseUrl || emptyAccount().baseUrl,
-    dedicatedAssistant: shared ? { ...shared } : null,
   };
   upsertAccount(state, account);
   return account;
@@ -181,8 +178,7 @@ export async function loginWait(timeoutMs = 120_000, qrcodeArg) {
         ilink_bot_id: account.ilinkBotId,
         ilink_user_id: account.ilinkUserId,
         accounts: listAccounts(loadState()).map(accountSummary),
-        hint: "绑定完成。若尚未登记共享助手：创建唯一的「微信」Grok Bot 助手并 wechat_set_dedicated_assistant；若已有则跳过新建，复用同一助手以保持会话上下文。后续扫码无需再配 webhook。",
-        shared_assistant: getSharedAssistant(),
+        hint: "绑定完成。为该号创建专属 Grok Bot 助手（每账号一个），调用 wechat_set_dedicated_assistant 登记 assistant_id 与 assistant_name。该助手内用 history 保持会话上下文。后续扫码绑定无需再配 webhook。",
       };
     }
     if (last.status === "binded_redirect" && last.bot_token) {
@@ -199,8 +195,7 @@ export async function loginWait(timeoutMs = 120_000, qrcodeArg) {
         ilink_bot_id: account.ilinkBotId,
         ilink_user_id: account.ilinkUserId,
         accounts: listAccounts(loadState()).map(accountSummary),
-        hint: "绑定完成。若尚未登记共享助手：创建唯一的「微信」Grok Bot 助手并 wechat_set_dedicated_assistant；若已有则跳过新建，复用同一助手以保持会话上下文。后续扫码无需再配 webhook。",
-        shared_assistant: getSharedAssistant(),
+        hint: "绑定完成。为该号创建专属 Grok Bot 助手（每账号一个），调用 wechat_set_dedicated_assistant 登记 assistant_id 与 assistant_name。该助手内用 history 保持会话上下文。后续扫码绑定无需再配 webhook。",
       };
     }
     if (last.status === "expired") {
@@ -351,13 +346,12 @@ export async function collectInbound(rawMsgs, account) {
       if (hit) rememberContext(s, hit, normalized.from_user_id, normalized.context_token);
       return s;
     });
-    const shared = getSharedAssistant();
     out.push({
       ...normalized,
       ilink_bot_id: account.ilinkBotId,
       ilink_user_id: account.ilinkUserId,
-      dedicated_assistant_id: shared?.id || account.dedicatedAssistant?.id || "",
-      dedicated_assistant_name: shared?.name || account.dedicatedAssistant?.name || "",
+      dedicated_assistant_id: account.dedicatedAssistant?.id || "",
+      dedicated_assistant_name: account.dedicatedAssistant?.name || "",
       session_id: `${account.ilinkBotId || ""}::${normalized.from_user_id}`,
     });
   }
@@ -557,13 +551,10 @@ export async function setTyping(toUserId, on, ilinkBotId) {
 export function statusPayload() {
   const state = loadState();
   const accounts = listAccounts(state);
-  const shared = getSharedAssistant(state);
   return {
     logged_in: accounts.length > 0,
     account_count: accounts.length,
     global_wake_configured: hasGlobalWake(),
-    shared_assistant: shared,
-    single_session: true,
     accounts: accounts.map((a) => ({
       ...accountSummary(a),
       peers: Object.keys(a.contextTokens || {}),
@@ -612,22 +603,21 @@ export async function setAccountWake(ilink_bot_id, url, key) {
 }
 
 export function setDedicatedAssistant(ilink_bot_id, assistant_id, assistant_name) {
+  if (!ilink_bot_id) throw new Error("ilink_bot_id 必填");
   if (!assistant_name) throw new Error("assistant_name 必填");
-  // All WeChat accounts share one Grok Bot assistant/session for conversation context.
-  const shared = persistSharedAssistant(assistant_id, assistant_name);
-  if (ilink_bot_id) {
-    updateState((s) => {
-      const hit = findAccount(s, { ilink_bot_id });
-      if (hit) hit.dedicatedAssistant = { ...shared };
-      return s;
-    });
-    saveStateSecure(loadState());
-  }
+  // One dedicated Grok assistant per WeChat account; talks for that account stay in its session via history.
+  updateState((s) => {
+    const hit = requireAccount(s, { ilink_bot_id });
+    hit.dedicatedAssistant = {
+      id: assistant_id || hit.dedicatedAssistant?.id || "",
+      name: assistant_name,
+    };
+    return s;
+  });
+  saveStateSecure(loadState());
+  const account = findAccount(loadState(), { ilink_bot_id });
   return {
-    shared_assistant: shared,
-    single_session: true,
-    ilink_bot_id: ilink_bot_id || null,
-    account: ilink_bot_id ? accountSummary(findAccount(loadState(), { ilink_bot_id })) : null,
-    accounts: listAccounts(loadState()).map(accountSummary),
+    ...accountSummary(account),
+    per_account_session: true,
   };
 }

@@ -42,8 +42,6 @@ export function emptyState() {
     accounts: [],
     pendingQrs: [],
     allowFrom: [],
-    /** One shared Grok Bot assistant for all WeChat talks (keeps chat context). */
-    sharedAssistant: null,
   };
 }
 
@@ -83,7 +81,7 @@ function saveTalks(talks) {
 }
 
 /**
- * Append a turn to the shared Grok-session talk log for a WeChat peer.
+ * Append a turn to the per-account Grok-session talk log for a WeChat peer.
  * role: "user" | "assistant"
  */
 export function appendTalk({ ilink_bot_id, from_user_id, role, text, items, at } = {}) {
@@ -110,38 +108,16 @@ export function getTalkHistory(ilink_bot_id, from_user_id, limit = 40) {
   return list.slice(-n);
 }
 
-export function getSharedAssistant(state = loadState()) {
-  if (state.sharedAssistant?.name || state.sharedAssistant?.id) {
+/** Dedicated Grok assistant for one bound WeChat account (one assistant per account). */
+export function getAccountAssistant(state, ilink_bot_id) {
+  const account = findAccount(state, { ilink_bot_id });
+  if (account?.dedicatedAssistant?.name || account?.dedicatedAssistant?.id) {
     return {
-      id: state.sharedAssistant.id || "",
-      name: state.sharedAssistant.name || "",
+      id: account.dedicatedAssistant.id || "",
+      name: account.dedicatedAssistant.name || "",
     };
-  }
-  for (const a of listAccounts(state)) {
-    if (a.dedicatedAssistant?.name || a.dedicatedAssistant?.id) {
-      return {
-        id: a.dedicatedAssistant.id || "",
-        name: a.dedicatedAssistant.name || "",
-      };
-    }
   }
   return null;
-}
-
-export function setSharedAssistant(assistant_id, assistant_name) {
-  if (!assistant_name) throw new Error("assistant_name 必填");
-  updateState((s) => {
-    s.sharedAssistant = {
-      id: assistant_id || s.sharedAssistant?.id || "",
-      name: assistant_name,
-    };
-    // Keep per-account fields in sync so older status/uninstall paths still work.
-    for (const a of s.accounts) {
-      a.dedicatedAssistant = { ...s.sharedAssistant };
-    }
-    return s;
-  });
-  return getSharedAssistant();
 }
 
 function ensureHome() {
@@ -178,17 +154,7 @@ export function loadState() {
   if (!fs.existsSync(state)) return emptyState();
   try {
     const raw = JSON.parse(fs.readFileSync(state, "utf8"));
-    const migrated = { ...emptyState(), ...migrateLegacyState(raw) };
-    if (!migrated.sharedAssistant?.name) {
-      const fromAccount = migrated.accounts.find((a) => a.dedicatedAssistant?.name);
-      if (fromAccount?.dedicatedAssistant) {
-        migrated.sharedAssistant = {
-          id: fromAccount.dedicatedAssistant.id || "",
-          name: fromAccount.dedicatedAssistant.name || "",
-        };
-      }
-    }
-    return migrated;
+    return { ...emptyState(), ...migrateLegacyState(raw) };
   } catch {
     return emptyState();
   }
@@ -319,7 +285,7 @@ export function drainInbox() {
   if (!fs.existsSync(inbox)) return [];
   const raw = fs.readFileSync(inbox, "utf8");
   fs.writeFileSync(inbox, "");
-  const shared = getSharedAssistant();
+  const state = loadState();
   return raw
     .split("\n")
     .map((line) => line.trim())
@@ -332,16 +298,19 @@ export function drainInbox() {
       }
     })
     .filter(Boolean)
-    .map((msg) => ({
-      ...msg,
-      session_id: msg.session_id || talkKey(msg.ilink_bot_id, msg.from_user_id),
-      shared_assistant_id: shared?.id || msg.dedicated_assistant_id || msg.shared_assistant_id || "",
-      shared_assistant_name: shared?.name || msg.dedicated_assistant_name || msg.shared_assistant_name || "",
-      // Prefer history stamped before the current turn was recorded.
-      history: Array.isArray(msg.history)
-        ? msg.history
-        : getTalkHistory(msg.ilink_bot_id, msg.from_user_id),
-    }));
+    .map((msg) => {
+      const dedicated = getAccountAssistant(state, msg.ilink_bot_id);
+      return {
+        ...msg,
+        session_id: msg.session_id || talkKey(msg.ilink_bot_id, msg.from_user_id),
+        dedicated_assistant_id: dedicated?.id || msg.dedicated_assistant_id || "",
+        dedicated_assistant_name: dedicated?.name || msg.dedicated_assistant_name || "",
+        // Prefer history stamped before the current turn was recorded.
+        history: Array.isArray(msg.history)
+          ? msg.history
+          : getTalkHistory(msg.ilink_bot_id, msg.from_user_id),
+      };
+    });
 }
 
 export function peekInboxCount() {
