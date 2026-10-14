@@ -2,5 +2,8 @@
   "name": "grok-wechat-server",
   "version": "1.0.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/"
+  }
 }
