@@ -81,4 +81,4 @@ The installing assistant will:
 3. Delete Routine「微信入站唤醒」and「微信监听保活」on the installing assistant, and remove any leftover copies on other assistants.
 4. Tell the user to right-click → Delete the dedicated assistants listed in the uninstall response (e.g. 微信1, 微信2) in the sidebar.
 
-Removing the connector from Settings also triggers local monitor cleanup. After a clean uninstall, reinstall requires a fresh webhook paste and QR scan; `wechat_status` shows zero accounts.
+The connector process exiting or restarting (Grok Bot update, box restart) does not trigger local cleanup, so the login is never wiped by accident; say "uninstall the WeChat plugin" in chat before removing the connector. After a clean uninstall, reinstall requires a fresh webhook paste and QR scan; `wechat_status` shows zero accounts.

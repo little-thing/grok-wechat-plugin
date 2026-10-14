@@ -31,7 +31,7 @@ import {
   setTyping,
   statusPayload,
 } from "./ilink.js";
-import { registerShutdownCleanup, touchConnectorActive, connectorAbandoned, runUninstall, uninstallWechat } from "./uninstall.js";
+import { touchConnectorActive, runUninstall, uninstallWechat } from "./uninstall.js";
 
 const self = fileURLToPath(import.meta.url);
 
@@ -328,7 +328,6 @@ async function onRpc(msg) {
 }
 
 function startMcp() {
-  registerShutdownCleanup();
   ensureMonitor();
   let buf = Buffer.alloc(0);
   process.stdin.on("data", async (chunk) => {
@@ -444,11 +443,6 @@ async function runMonitor() {
   let failures = 0;
   while (true) {
     try {
-      if (connectorAbandoned()) {
-        log("connector removed, running uninstall");
-        runUninstall();
-        process.exit(0);
-      }
       const accountsNow = listAccounts();
       if (!accountsNow.length) {
         log("no accounts, stopping");
