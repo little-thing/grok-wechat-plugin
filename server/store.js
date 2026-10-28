@@ -1,6 +1,8 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const DEFAULT_BASE = "https://ilinkai.weixin.qq.com";
 const MAX_LOCAL_TOKENS = 10;
@@ -242,7 +244,7 @@ export function readPid() {
   const { pid } = paths();
   if (!fs.existsSync(pid)) return 0;
   const n = Number(fs.readFileSync(pid, "utf8").trim());
-  return Number.isFinite(n) ? n : 0;
+  return Number.isInteger(n) && n > 0 ? n : 0;
 }
 
 export function clearPid() {
@@ -251,7 +253,7 @@ export function clearPid() {
 }
 
 export function isPidAlive(pid) {
-  if (!pid) return false;
+  if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;
@@ -260,11 +262,108 @@ export function isPidAlive(pid) {
   }
 }
 
+export function monitorEntryPath() {
+  return fileURLToPath(new URL("./index.js", import.meta.url));
+}
+
+function sameFile(token, entry) {
+  if (token === entry) return true;
+  if (!token || token.startsWith("-") || !token.includes(path.sep)) return false;
+  try {
+    return fs.realpathSync(token) === fs.realpathSync(entry);
+  } catch {
+    return false;
+  }
+}
+
+function containsArg(line, token) {
+  let from = 0;
+  while (from <= line.length) {
+    const idx = line.indexOf(token, from);
+    if (idx < 0) return false;
+    const before = idx === 0 ? " " : line[idx - 1];
+    const after = line[idx + token.length] ?? " ";
+    if (/\s/.test(before) && /\s/.test(after)) return true;
+    from = idx + Math.max(token.length, 1);
+  }
+  return false;
+}
+
+function readLinuxArgv(pid) {
+  try {
+    const parts = fs.readFileSync(`/proc/${pid}/cmdline`).toString("utf8").split("\0").filter(Boolean);
+    return parts.length ? parts : null;
+  } catch {
+    return null;
+  }
+}
+
+function readPosixCommand(pid) {
+  try {
+    const comm = execFileSync("ps", ["-p", String(pid), "-o", "comm="], {
+      encoding: "utf8",
+      timeout: 2000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    const args = execFileSync("ps", ["-ww", "-p", String(pid), "-o", "args="], {
+      encoding: "utf8",
+      timeout: 2000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (!comm || !args) return null;
+    return { comm, args };
+  } catch {
+    return null;
+  }
+}
+
+function commandLineIsMonitor(line, entry) {
+  if (!containsArg(line, "--monitor")) return false;
+  if (containsArg(line, entry)) return true;
+  try {
+    const real = fs.realpathSync(entry);
+    return real !== entry && containsArg(line, real);
+  } catch {
+    return false;
+  }
+}
+
+// Linux thread ids share the pid namespace, so kill(pid, 0) can succeed for a
+// live thread inside the MCP host. A recorded id counts only when argv is this
+// install's server entry plus --monitor.
+export function isMonitorProcess(pid) {
+  if (!isPidAlive(pid)) return false;
+  const entry = monitorEntryPath();
+  if (process.platform === "linux") {
+    const argv = readLinuxArgv(pid);
+    return Boolean(argv && argv.includes("--monitor") && argv.some((arg) => sameFile(arg, entry)));
+  }
+  const info = readPosixCommand(pid);
+  if (!info || path.basename(info.comm) !== path.basename(process.execPath)) return false;
+  return commandLineIsMonitor(info.args, entry);
+}
+
 export function monitorRunning() {
   const pid = readPid();
-  if (isPidAlive(pid)) return pid;
-  if (pid) clearPid();
+  if (!pid) return 0;
+  if (isMonitorProcess(pid)) return pid;
+  clearPid();
   return 0;
+}
+
+export function stopMonitorProcess() {
+  const pid = monitorRunning();
+  if (!pid || !isMonitorProcess(pid)) {
+    if (pid) clearPid();
+    return 0;
+  }
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    // already gone
+  }
+  clearPid();
+  return pid;
 }
 
 export function fallbackWakePath() {

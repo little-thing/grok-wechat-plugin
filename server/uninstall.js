@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { clearPid, homeDir, listAccounts, loadState, monitorRunning, readPid } from "./store.js";
+import { clearPid, homeDir, isMonitorProcess, listAccounts, loadState, monitorRunning } from "./store.js";
 
 const PLUGIN_DIR_NAMES = ["grok-wechat-plugin"];
 const GROK_BOX_HOME = "/home/box";
@@ -47,15 +47,13 @@ function sh(cmd) {
 
 function listMonitorPids() {
   const pids = new Set();
-  const fromFile = readPid();
-  if (fromFile) pids.add(fromFile);
   const running = monitorRunning();
   if (running) pids.add(running);
   try {
     const out = sh(`pgrep -f "${MONITOR_MATCH}" 2>/dev/null || true`);
     for (const line of out.split("\n")) {
       const n = Number(line.trim());
-      if (Number.isFinite(n) && n > 0) pids.add(n);
+      if (Number.isInteger(n) && n > 0 && isMonitorProcess(n)) pids.add(n);
     }
   } catch {
     // ignore
@@ -66,6 +64,7 @@ function listMonitorPids() {
 export function stopAllMonitors() {
   const stopped = [];
   for (const pid of listMonitorPids()) {
+    if (!isMonitorProcess(pid)) continue;
     try {
       process.kill(pid, "SIGTERM");
       stopped.push(pid);
