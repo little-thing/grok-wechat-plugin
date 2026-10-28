@@ -2,7 +2,7 @@
 
 [中文](README.md) | [English](README.en.md)
 
-Grok Bot 的微信 iLink 渠道。扫码绑定个人号后，私信经共享 webhook 唤醒对应专属助手，可回文字与媒体，并显示正在输入。
+Grok Bot 的微信 iLink 渠道。扫码绑定个人号后，私信经共享 webhook 唤醒对应专属助手，专属助手立刻回文字与媒体，并显示正在输入。
 
 ## 能力
 
@@ -35,12 +35,16 @@ Grok Bot 的微信 iLink 渠道。扫码绑定个人号后，私信经共享 web
    安装助手加上微信连接器，并创建两条 Routine：**「微信入站唤醒」**（Webhook）与 **「微信监听保活」**（每 5 分钟 `wechat_start_monitor`）。webhook Routine 创建后平台不把 url/key 返回给 agent；用户从该 Routine 面板复制地址与密钥发来**一次**，安装助手 `wechat_set_wake` 写入全局 `wake.json`，当前及后续绑定账号共用。
 
 3. **扫码登录微信**  
-   `wechat_login_start` 出码 → 立即 `wechat_login_wait` 至 `logged_in=true`。每次绑定成功后**创建该号的专属 Grok Bot 助手**，`wechat_set_dedicated_assistant` 登记 id/名称；专属助手不建入站 Routine。绑定更多账号时重复出码与等待，**无需**再粘贴 webhook。
+   `wechat_login_start` 出码 → 立即 `wechat_login_wait` 至 `logged_in=true`。每次绑定成功后**创建该号的专属 Grok Bot 助手**，描述为：
+
+   > 负责该微信号的入站私信。收到按 ilink_bot_id 转交的私信后，立刻用同一 ilink_bot_id 向该微信对端回复：先 wechat_typing（on），再 wechat_send 或 wechat_send_media，发完关闭正在输入。
+
+   然后 `wechat_set_dedicated_assistant` 登记 id/名称。专属助手不建入站 Routine。绑定更多账号时重复出码与等待，**无需**再粘贴 webhook。
 
 4. **绑定完成**  
-   `wechat_status` 显示 `global_wake_configured=true` 与各账号 `dedicated_assistant_name`。入站由安装助手 `wechat_inbox` 后按 `ilink_bot_id` 转交专属助手。
+   `wechat_status` 显示 `global_wake_configured=true` 与各账号 `dedicated_assistant_name`。入站由安装助手 `wechat_inbox` 后按 `ilink_bot_id` 转交专属助手，专属助手立刻向该微信对端 `wechat_send`。
 
-对方给你发一条微信私信，就能在微信里收到回复。
+对方发来一条微信私信，专属助手立刻在微信里回复。
 
 ## 绑定后的效果
 
@@ -48,7 +52,7 @@ Grok Bot 的微信 iLink 渠道。扫码绑定个人号后，私信经共享 web
 
 ![微信里发私信，助手立刻回复](docs/bind-effect.png)
 
-回复前可显示「正在输入」。文字、语音转写、图片、视频、文件都可处理；回媒体时用本机文件路径。
+回复前显示「正在输入」，发完关闭。文字、语音转写、图片、视频、文件都可处理；回媒体时用本机文件路径。
 
 要限制谁能对话，让助手把对方加入 allowlist。要解绑某个号，在对话里说登出该微信；不指定则登出全部。
 
@@ -58,9 +62,9 @@ Grok Bot 的微信 iLink 渠道。扫码绑定个人号后，私信经共享 web
 
 ## 链路
 
-微信私信 → monitor 收件箱 → POST 共享 webhook → 安装助手醒来 → `wechat_inbox` → 按 `ilink_bot_id` 转交专属助手 → `wechat_send` / `wechat_send_media`
+微信私信 → monitor 收件箱 → POST 共享 webhook → 安装助手醒来 → `wechat_inbox` → 按 `ilink_bot_id` 转交专属助手 → 立刻 `wechat_send` / `wechat_send_media`
 
-任务做完立刻回复。`bot_agent` 为 `Grokbot/1.0.0`。
+专属助手收到转交后立刻向该微信对端回复。回复前 `wechat_typing`（on），发完关闭。`bot_agent` 为 `Grokbot/1.0.0`。
 
 安装细节见 `skills/wechat-channel/SKILL.md`。
 

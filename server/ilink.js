@@ -177,7 +177,7 @@ export async function loginWait(timeoutMs = 120_000, qrcodeArg) {
         ilink_bot_id: account.ilinkBotId,
         ilink_user_id: account.ilinkUserId,
         accounts: listAccounts(loadState()).map(accountSummary),
-        hint: "绑定完成。为该号创建专属 Grok Bot 助手，调用 wechat_set_dedicated_assistant 登记 assistant_id 与 assistant_name。后续扫码绑定无需再配 webhook。",
+        hint: "绑定完成。为该号创建专属 Grok Bot 助手，描述为：「负责该微信号的入站私信。收到按 ilink_bot_id 转交的私信后，立刻用同一 ilink_bot_id 向该微信对端回复：先 wechat_typing（on），再 wechat_send 或 wechat_send_media，发完关闭正在输入。」调用 wechat_set_dedicated_assistant 登记 assistant_id 与 assistant_name。后续扫码绑定无需再配 webhook。",
       };
     }
     if (last.status === "binded_redirect" && last.bot_token) {
@@ -194,7 +194,7 @@ export async function loginWait(timeoutMs = 120_000, qrcodeArg) {
         ilink_bot_id: account.ilinkBotId,
         ilink_user_id: account.ilinkUserId,
         accounts: listAccounts(loadState()).map(accountSummary),
-        hint: "绑定完成。为该号创建专属 Grok Bot 助手，调用 wechat_set_dedicated_assistant 登记 assistant_id 与 assistant_name。后续扫码绑定无需再配 webhook。",
+        hint: "绑定完成。为该号创建专属 Grok Bot 助手，描述为：「负责该微信号的入站私信。收到按 ilink_bot_id 转交的私信后，立刻用同一 ilink_bot_id 向该微信对端回复：先 wechat_typing（on），再 wechat_send 或 wechat_send_media，发完关闭正在输入。」调用 wechat_set_dedicated_assistant 登记 assistant_id 与 assistant_name。后续扫码绑定无需再配 webhook。",
       };
     }
     if (last.status === "expired") {

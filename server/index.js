@@ -149,12 +149,19 @@ const tools = {
     },
   },
   wechat_inbox: {
-    description: "立即取出 monitor 缓存的入站消息（取出后清空）。每条消息带 ilink_bot_id，回复时用同一账号。",
+    description: "立即取出 monitor 缓存的入站消息（取出后清空）。每条消息带 ilink_bot_id；按它转交专属助手后，专属助手用同一账号立刻回复该对端。",
     inputSchema: { type: "object", properties: {} },
     handle: async () => ok({ messages: drainInbox(), from_monitor: true }),
   },
   wechat_send: {
-    description: "向微信用户发文本。必须带该用户已缓存的 context_token（对方先发过消息）。Markdown 会转成纯文本。",
+    description: "向已发过消息的微信对端回复文本。入站私信转交后的默认回复：用该对端 to_user_id 与同一 ilink_bot_id 立刻发送。对方先发过消息才有 context_token。Markdown 会转成纯文本。",
+    annotations: {
+      title: "回复已发消息的微信对端",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: {
@@ -167,7 +174,14 @@ const tools = {
     handle: async ({ text, to_user_id, ilink_bot_id }) => ok(await sendText(to_user_id, text, ilink_bot_id)),
   },
   wechat_send_media: {
-    description: "发送图片/视频/文件。路径是 Grok Bot 电脑上的本地文件。",
+    description: "向已发过消息的微信对端发送图片/视频/文件。入站回复用同一 ilink_bot_id 与该对端 to_user_id 立刻发送。路径是 Grok Bot 电脑上的本地文件。",
+    annotations: {
+      title: "向已发消息的微信对端发送媒体",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: "object",
       properties: {
@@ -183,7 +197,7 @@ const tools = {
       ok(await sendMedia(to_user_id, path, kind, caption, ilink_bot_id)),
   },
   wechat_typing: {
-    description: "发送或取消「正在输入」。回复前先打开，发完后关闭。",
+    description: "发送或取消「正在输入」。入站回复前对同一对端打开，wechat_send / wechat_send_media 发完后关闭。",
     inputSchema: {
       type: "object",
       properties: {
@@ -214,7 +228,7 @@ const tools = {
     handle: async ({ ilink_bot_id, url, key }) => ok(await setAccountWake(ilink_bot_id, url, key)),
   },
   wechat_set_dedicated_assistant: {
-    description: "为已绑定微信账号登记专属 Grok Bot 助手 id/名称。每次扫码绑定成功后创建专属助手并调用，供入站按 ilink_bot_id 转交与卸载侧栏列表。",
+    description: "为已绑定微信账号登记专属 Grok Bot 助手 id/名称。创建时的描述：负责该微信号的入站私信。收到按 ilink_bot_id 转交的私信后，立刻用同一 ilink_bot_id 向该微信对端回复：先 wechat_typing（on），再 wechat_send 或 wechat_send_media，发完关闭正在输入。每次扫码绑定成功后创建并调用，供入站按 ilink_bot_id 转交与卸载侧栏列表。",
     inputSchema: {
       type: "object",
       properties: {
@@ -265,6 +279,7 @@ const TOOL_LIST = Object.entries(tools).map(([name, t]) => ({
   name,
   description: t.description,
   inputSchema: t.inputSchema,
+  ...(t.annotations ? { annotations: t.annotations } : {}),
 }));
 
 async function dispatch(name, args) {
