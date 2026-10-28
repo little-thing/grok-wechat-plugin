@@ -14,6 +14,7 @@ import {
   paths,
   removeAccount,
   resolveWakeForAccount,
+  stopMonitorProcess,
   updateState,
   writePid,
 } from "./store.js";
@@ -120,14 +121,10 @@ const tools = {
       },
     },
     handle: async ({ ilink_bot_id, ilink_user_id, all }) => {
-      const pid = monitorRunning();
       const state = loadState();
       const logoutAll = all !== false && !ilink_bot_id && !ilink_user_id;
       if (logoutAll) {
-        if (pid) {
-          try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ }
-          clearPid();
-        }
+        stopMonitorProcess();
         updateState((s) => {
           s.accounts = [];
           s.pendingQrs = [];
@@ -141,12 +138,8 @@ const tools = {
       if (after === before) {
         throw new Error("未找到要登出的账号");
       }
-      if (!after && pid) {
-        try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ }
-        clearPid();
-      } else if (after && !monitorRunning()) {
-        ensureMonitor();
-      }
+      if (!after) stopMonitorProcess();
+      else if (!monitorRunning()) ensureMonitor();
       return ok({
         logged_out: true,
         scope: "one",
@@ -238,10 +231,8 @@ const tools = {
     description: "停止后台长轮询。",
     inputSchema: { type: "object", properties: {} },
     handle: async () => {
-      const pid = monitorRunning();
+      const pid = stopMonitorProcess();
       if (!pid) return ok({ stopped: true, was_running: false });
-      try { process.kill(pid, "SIGTERM"); } catch { /* ignore */ }
-      clearPid();
       return ok({ stopped: true, pid });
     },
   },
