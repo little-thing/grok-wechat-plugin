@@ -23,9 +23,9 @@ description: 用户要在 Grok Bot 里安装、登录、收发、调整监听保
 1. **连接器** `grok-wechat`，入口 `server/index.js`。用户若需确认则点「加」添加连接器。
 2. **插件文件**落在 Grok Bot 电脑（`/home/box/grok-wechat-plugin`）。
 3. **monitor 自启**：用户登录或 MCP `initialize` 时调用 `wechat_start_monitor` 拉起后台长轮询。已绑定账号时，每个账号独立长轮询入站。
-4. **安装助手**创建两条 Routine（全渠道共用，只建一次）：
+4. **安装助手**查找并复用已有的同名 Routine，只创建缺失的 Routine（全渠道共用）：
    - **「微信入站唤醒」**（webhook）：入站后 `wechat_inbox` → 按 `ilink_bot_id` 转交专属助手，专属助手立刻向该微信对端 `wechat_send`
-   - **「微信监听保活」**：默认每 5 分钟。用户在安装时指定保活间隔，则按其指定的分钟数调度，最短 5 分钟。提示词 `只调用 wechat_start_monitor，确保微信入站监听在跑。除此之外什么都不要做。`
+   - **「微信监听保活」**：新建时默认每 5 分钟。用户指定间隔时，先确认是至少 5 分钟的整分钟数，否则请其重新选择。复用时保留现有调度，除非用户明确要求更改。设置后查阅 Routine 的实际调度并向用户确认。提示词 `只调用 wechat_start_monitor，确保微信入站监听在跑。除此之外什么都不要做。`
 5. **全局 webhook（粘贴一次）**：Grok Bot 创建 webhook Routine 时**不会**把 url/key 返回给 agent；用户从该 Routine 面板复制 **webhook 地址**和**密钥**发来一次。安装助手调用 `wechat_set_wake`（url、key，省略 `ilink_bot_id`）写入全局 `wake.json`（权限 600），当前及后续所有已绑定账号共用。`wechat_status` 的 `global_wake_configured=true` 表示入站已就绪。
 6. **扫码绑定**：`wechat_login_start` 出码并向用户展示 → 立即 `wechat_login_wait`，重复调用直至 `logged_in=true`；若 `expired=true` 则重新 `wechat_login_start` 后再 `wechat_login_wait`。对方先发一条才有 context_token。
 
