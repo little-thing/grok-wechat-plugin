@@ -288,8 +288,21 @@ async function downloadMedia(media, label) {
   const cipher = Buffer.from(await res.arrayBuffer());
   const key = parseAesKey(media.aes_key);
   const plain = aesEcb(cipher, key, "decrypt");
-  const file = path.join(paths().media, `${Date.now()}-${label}`);
-  fs.writeFileSync(file, plain);
+  const file = mediaFilePath(paths().media, label);
+  fs.writeFileSync(file, plain, { mode: 0o600 });
+  return file;
+}
+
+/** 入站文件名来自对端，只保留 basename，防止 `../` 写出 media 目录。 */
+export function safeMediaName(label) {
+  const base = path.basename(String(label || "")).replace(/[\/\\\0]/g, "_").slice(0, 120);
+  return base && base !== "." && base !== ".." ? base : "file";
+}
+
+export function mediaFilePath(mediaDir, label) {
+  const dir = path.resolve(mediaDir);
+  const file = path.join(dir, `${Date.now()}-${safeMediaName(label)}`);
+  if (path.dirname(file) !== dir) throw new Error("非法文件名");
   return file;
 }
 

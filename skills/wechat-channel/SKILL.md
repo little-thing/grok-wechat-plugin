@@ -97,7 +97,7 @@ stdio 支持换行分隔 JSON 与 Content-Length 分帧。
 - 删除 `/home/box/grok-wechat-plugin` 与 `GROK_WECHAT_HOME` / `/home/box/.grok-wechat`（含 `account.json`、`wake.json`、token、inbox、media、pid、log、`ensure-monitor.sh`）
 - 清理 crontab 与 shell 自启项
 
-返回 `dedicated_assistants_sidebar_delete`（绑定期间登记的专属助手名称）。从 Settings 卸掉连接器后，monitor 也会自动完成本机清理。
+返回 `dedicated_assistants_sidebar_delete`（绑定期间登记的专属助手名称）。连接器进程退出或重启**不会**触发本机清理；必须先调用 `wechat_uninstall` 再卸载连接器。
 
 ### 2. 平台清理（安装助手执行）
 
