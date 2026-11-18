@@ -70,7 +70,7 @@ After handoff, the dedicated assistant replies at once to that WeChat peer. Turn
 
 See `skills/wechat-channel/SKILL.md` for install details.
 
-## One-line uninstall
+## Uninstall
 
 Send this in Grok Bot:
 
@@ -78,11 +78,9 @@ Send this in Grok Bot:
 Uninstall the WeChat plugin
 ```
 
-The installing assistant will:
+1. The installing assistant calls `wechat_uninstall` and shows you the absolute cleanup paths and any skipped custom state directory. You can preview the same plan from the plugin directory with `sh scripts/uninstall.sh`.
+2. Review the preview. On the connector host, run `sh scripts/uninstall.sh --confirm TOKEN` from the plugin directory with the same `GROK_WECHAT_HOME` setting. Replace `TOKEN` with the returned `confirmation_token`. If the command returns a fresh preview, review the updated paths before confirming again.
+3. Once the command reports `uninstalled: true` or `cleanup_deferred: true`, the assistant removes the `grok-wechat` connector and deletes the「微信入站唤醒」and「微信监听保活」routines, including copies on other assistants. Deferred cleanup waits for the connector and monitor to exit. If the processes stay active and cleanup times out, preview and confirm again after they exit.
+4. Right-click the dedicated assistants listed in `dedicated_assistants_sidebar_delete` (for example, 微信1 or 微信2) and delete them from the sidebar.
 
-1. Call `wechat_uninstall` to clean the machine and read `dedicated_assistants_sidebar_delete` for dedicated assistant names.
-2. Remove the `grok-wechat` connector.
-3. Delete Routine「微信入站唤醒」and「微信监听保活」on the installing assistant, and remove any leftover copies on other assistants.
-4. Tell the user to right-click → Delete the dedicated assistants listed in the uninstall response (e.g. 微信1, 微信2) in the sidebar.
-
-The connector process exiting or restarting (Grok Bot update, box restart) does not trigger local cleanup, so the login is never wiped by accident; say "uninstall the WeChat plugin" in chat before removing the connector. After a clean uninstall, reinstall requires a fresh webhook paste and QR scan; `wechat_status` shows zero accounts.
+Verified custom state directories retain unrelated files. A clean reinstall requires a fresh webhook and QR scan.

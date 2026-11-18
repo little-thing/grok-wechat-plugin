@@ -1,5 +1,8 @@
 import crypto from "node:crypto";
+import dns from "node:dns";
 import fs from "node:fs";
+import https from "node:https";
+import { BlockList, isIP } from "node:net";
 import path from "node:path";
 import {
   contextFor,
@@ -29,6 +32,27 @@ const CDN_BASE = "https://novac2c.cdn.weixin.qq.com/c2c";
 const LONG_POLL_MS = 35_000;
 const API_TIMEOUT_MS = 15_000;
 const ERR_SESSION_EXPIRED = -14;
+
+const WAKE_URL = /^https:\/\/api2\.cursor\.sh\/automations\/webhook\/[A-Za-z0-9_-]+$/;
+const WAKE_TIMEOUT_MS = 5_000;
+const WAKE_MAX_HEADER_BYTES = 16 * 1024;
+
+const wakeBlockedAddresses = new BlockList();
+for (const [address, prefix] of [
+  ["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8],
+  ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.0.0.0", 24], ["192.0.2.0", 24],
+  ["192.88.99.0", 24], ["192.168.0.0", 16], ["198.18.0.0", 15], ["198.51.100.0", 24],
+  ["203.0.113.0", 24], ["224.0.0.0", 3],
+]) {
+  wakeBlockedAddresses.addSubnet(address, prefix, "ipv4");
+}
+for (const [address, prefix] of [
+  ["2001::", 23], ["2001:db8::", 32], ["2002::", 16], ["3fff::", 20],
+]) {
+  wakeBlockedAddresses.addSubnet(address, prefix, "ipv6");
+}
+const wakeGlobalIpv6 = new BlockList();
+wakeGlobalIpv6.addSubnet("2000::", 3, "ipv6");
 
 export const ITEM = { TEXT: 1, IMAGE: 2, VOICE: 3, FILE: 4, VIDEO: 5 };
 export const MSG_TYPE = { USER: 1, BOT: 2 };
@@ -549,26 +573,73 @@ export function statusPayload() {
   };
 }
 
-export async function probeWake(url, key) {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      source: "grok-wechat",
-      probe: true,
-      count: 0,
-    }),
-  });
-  const text = await res.text();
-  return { status: res.status, body: text.slice(0, 180) };
+function validateWake(url, key) {
+  if (typeof url !== "string" || url !== url.trim() || !WAKE_URL.test(url)) {
+    throw new Error("请使用 Grok Bot Routine 的 HTTPS webhook 地址（api2.cursor.sh/automations/webhook/<id>）");
+  }
+  if (typeof key !== "string" || key !== key.trim() || !/^[A-Za-z0-9._~+/-]+=*$/.test(key)) {
+    throw new Error("请使用 Grok Bot Routine 的 webhook 密钥");
+  }
 }
 
-export async function setAccountWake(ilink_bot_id, url, key) {
-  if (!url || !key) throw new Error("url 和 key 必填");
-  const probe = await probeWake(url, key);
+function isPublicWakeAddress({ address, family }) {
+  if (isIP(address) !== family) return false;
+  if (family === 4) return !wakeBlockedAddresses.check(address, "ipv4");
+  return family === 6
+    && wakeGlobalIpv6.check(address, "ipv6")
+    && !wakeBlockedAddresses.check(address, "ipv6");
+}
+
+function lookupWakeAddress(hostname, options, callback) {
+  dns.lookup(hostname, { all: true }, (err, addresses) => {
+    if (err || !addresses.length || !addresses.every(isPublicWakeAddress)) {
+      callback(new Error("webhook DNS lookup failed or returned a non-public address"));
+      return;
+    }
+    const candidates = options.family
+      ? addresses.filter(({ family }) => family === options.family)
+      : addresses;
+    if (!candidates.length) {
+      callback(new Error("webhook DNS lookup returned no usable address"));
+      return;
+    }
+    if (options.all) callback(null, candidates);
+    else callback(null, candidates[0].address, candidates[0].family);
+  });
+}
+
+export async function sendWake({ url, key }, payload) {
+  validateWake(url, key);
+  const signal = AbortSignal.timeout(WAKE_TIMEOUT_MS);
+  try {
+    return await new Promise((resolve, reject) => {
+      const body = JSON.stringify(payload);
+      const request = https.request(new URL(url), {
+        method: "POST",
+        agent: false,
+        rejectUnauthorized: true,
+        lookup: lookupWakeAddress,
+        signal,
+        maxHeaderSize: WAKE_MAX_HEADER_BYTES,
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+      }, (response) => {
+        resolve(response.statusCode);
+        response.destroy();
+      });
+      request.once("error", reject);
+      request.end(body);
+    });
+  } catch {
+    throw new Error(signal.aborted ? "webhook 请求超时" : "webhook 请求失败");
+  }
+}
+
+export function setAccountWake(ilink_bot_id, url, key) {
+  validateWake(url, key);
   saveGlobalWake(url, key);
   if (ilink_bot_id) {
     updateState((s) => {
@@ -581,7 +652,6 @@ export async function setAccountWake(ilink_bot_id, url, key) {
   return {
     global_wake_configured: true,
     ilink_bot_id: ilink_bot_id || null,
-    probe,
     accounts: listAccounts(loadState()).map(accountSummary),
   };
 }

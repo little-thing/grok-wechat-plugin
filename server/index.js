@@ -27,6 +27,7 @@ import {
   notifyStop,
   sendMedia,
   sendText,
+  sendWake,
   setAccountWake,
   setDedicatedAssistant,
   setTyping,
@@ -215,17 +216,17 @@ const tools = {
     handle: async () => ok(ensureMonitor()),
   },
   wechat_set_wake: {
-    description: "保存全局入站 webhook（wake.json，权限 600），供当前及后续所有已绑定账号共用。ilink_bot_id 可选；传入时同时写入该账号并仍保留全局配置。",
+    description: "在本机保存全局入站 webhook（wake.json，权限 600），供当前及后续所有已绑定账号共用。实际收到入站消息时才发送 webhook。ilink_bot_id 可选；传入时同时写入该账号并仍保留全局配置。",
     inputSchema: {
       type: "object",
       properties: {
-        url: { type: "string", description: "安装助手 Routine「微信入站唤醒」的 webhook 地址" },
+        url: { type: "string", description: "安装助手 Routine「微信入站唤醒」面板的 POST to 地址（https://api2.cursor.sh/automations/webhook/<id>）" },
         key: { type: "string", description: "webhook 密钥" },
         ilink_bot_id: { type: "string", description: "可选，同时写入该已绑定账号；省略则仅设置全局 wake" },
       },
       required: ["url", "key"],
     },
-    handle: async ({ ilink_bot_id, url, key }) => ok(await setAccountWake(ilink_bot_id, url, key)),
+    handle: async ({ ilink_bot_id, url, key }) => ok(setAccountWake(ilink_bot_id, url, key)),
   },
   wechat_set_dedicated_assistant: {
     description: "为已绑定微信账号登记专属 Grok Bot 助手 id/名称。创建时的描述：负责该微信号的入站私信。收到按 ilink_bot_id 转交的私信后，立刻用同一 ilink_bot_id 向该微信对端回复：先 wechat_typing（on），再 wechat_send 或 wechat_send_media，发完关闭正在输入。每次扫码绑定成功后创建并调用，供入站按 ilink_bot_id 转交与卸载侧栏列表。",
@@ -396,22 +397,14 @@ async function wakeAgent(messages, log) {
       continue;
     }
     try {
-      const res = await fetch(cfg.url, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${cfg.key}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          source: "grok-wechat",
-          count: batch.length,
-          from_user_ids: batch.map((m) => m.from_user_id),
-          ilink_bot_id: botId,
-          ilink_user_id: account?.ilinkUserId || batch[0]?.ilink_user_id || "",
-        }),
+      const status = await sendWake(cfg, {
+        source: "grok-wechat",
+        count: batch.length,
+        from_user_ids: batch.map((m) => m.from_user_id),
+        ilink_bot_id: botId,
+        ilink_user_id: account?.ilinkUserId || batch[0]?.ilink_user_id || "",
       });
-      const text = await res.text();
-      log(`wake bot=${botId} ${res.status} ${text.slice(0, 180)}`);
+      log(`wake ${status === 200 ? "accepted" : "rejected"} bot=${botId} status=${status}`);
     } catch (err) {
       log(`wake error bot=${botId} ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -431,7 +424,7 @@ async function pollAccount(account, log) {
 }
 
 async function runMonitor() {
-  const logStream = fs.createWriteStream(paths().log, { flags: "a" });
+  const logStream = fs.createWriteStream(paths().log, { flags: "a", mode: 0o600 });
   const log = (line) => {
     logStream.write(`${new Date().toISOString()} ${line}\n`);
   };
@@ -439,7 +432,7 @@ async function runMonitor() {
   const accounts = listAccounts();
   await Promise.all(accounts.map((a) => notifyStart(a)));
   const onExit = async () => {
-    const current = listAccounts();
+    const current = listAccounts(loadState({ createHome: false }));
     await Promise.all(current.map((a) => notifyStop(a)));
     clearPid();
     process.exit(0);
