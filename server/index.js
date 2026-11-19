@@ -63,9 +63,9 @@ async function sleep(ms) {
 }
 
 function ensureMonitor() {
+  const accounts = listAccounts();
   const existing = monitorRunning();
   if (existing) return { already_running: true, pid: existing };
-  const accounts = listAccounts();
   if (!accounts.length) return { started: false, reason: "not_logged_in" };
   const child = spawn(process.execPath, [self, "--monitor"], {
     detached: true,
@@ -75,6 +75,14 @@ function ensureMonitor() {
   child.unref();
   writePid(child.pid);
   return { started: true, pid: child.pid, account_count: accounts.length };
+}
+
+function startMonitorOnConnect() {
+  try {
+    ensureMonitor();
+  } catch (error) {
+    process.emitWarning(error);
+  }
 }
 
 const accountRefSchema = {
@@ -270,7 +278,7 @@ const tools = {
     },
   },
   wechat_uninstall: {
-    description: "完整卸载微信渠道：停止 monitor、删除状态与插件目录、清理自启项；返回 platform_cleanup 与 dedicated_assistants_sidebar_delete（侧栏专属助手名称列表）。",
+    description: "预览微信渠道卸载，返回待清理路径、跳过的目录和 confirmation_token。将预览与 token 展示给用户，用户核对后在连接器主机确认。",
     inputSchema: { type: "object", properties: {} },
     handle: async () => ok(uninstallWechat()),
   },
@@ -308,7 +316,7 @@ async function onRpc(msg) {
   const { id, method, params } = msg;
   if (method === "initialize") {
     touchConnectorActive();
-    ensureMonitor();
+    startMonitorOnConnect();
     return {
       jsonrpc: "2.0",
       id,
@@ -335,7 +343,7 @@ async function onRpc(msg) {
 }
 
 function startMcp() {
-  ensureMonitor();
+  startMonitorOnConnect();
   let buf = Buffer.alloc(0);
   process.stdin.on("data", async (chunk) => {
     buf = Buffer.concat([buf, chunk]);
@@ -391,12 +399,12 @@ async function wakeAgent(messages, log) {
   }
   for (const [botId, batch] of byBot) {
     const account = findAccount(state, { ilink_bot_id: botId });
-    const cfg = resolveWakeForAccount(account);
-    if (!cfg) {
-      log(`wake skipped bot=${botId}: no wake config`);
-      continue;
-    }
     try {
+      const cfg = resolveWakeForAccount(account);
+      if (!cfg) {
+        log(`wake skipped bot=${botId}: no wake config`);
+        continue;
+      }
       const status = await sendWake(cfg, {
         source: "grok-wechat",
         count: batch.length,

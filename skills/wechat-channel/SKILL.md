@@ -62,7 +62,7 @@ stdio 支持换行分隔 JSON 与 Content-Length 分帧。
 | `wechat_stop_monitor` | 停止后台长轮询 |
 | `wechat_approve` | `user_id` 加入 allowlist；`clear=true` 清空后接收全部私信。空列表表示接收全部 |
 | `wechat_logout` | 默认登出全部并停 monitor；传入 `ilink_bot_id` 只登出一个 |
-| `wechat_uninstall` | 本机完整清理，返回 `platform_cleanup` 与 `dedicated_assistants_sidebar_delete` |
+| `wechat_uninstall` | 预览本机清理，返回待清理路径和 `confirmation_token`，由用户核对后确认 |
 
 ## 入站之后
 

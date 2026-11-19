@@ -8,7 +8,7 @@ import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "grok-wechat-test-"));
+const HOME = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "grok-wechat-test-"));
 process.env.GROK_WECHAT_HOME = HOME;
 
 const store = await import("../store.js");

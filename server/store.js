@@ -66,25 +66,49 @@ function warnIfExposed(file, stats) {
   process.emitWarning(warning);
 }
 
+function checkStateHome(home) {
+  const stats = fs.lstatSync(home, { throwIfNoEntry: false });
+  if (!stats) {
+    const parent = path.dirname(home);
+    if (parent !== home) checkStateHome(parent);
+    return null;
+  }
+  if (!stats.isDirectory() || fs.realpathSync(home) !== home) {
+    throw new Error(`grok-wechat: state directory must be a real directory without symbolic links: ${home}`);
+  }
+  return stats;
+}
+
+function ensureStateHome(home) {
+  const existing = checkStateHome(home);
+  if (existing) return existing;
+  fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+  return checkStateHome(home);
+}
+
 function ensureHome() {
   const { home, media } = paths();
-  fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+  const stats = ensureStateHome(home);
   fs.mkdirSync(media, { recursive: true, mode: 0o700 });
+  return stats;
 }
 
 function ensurePrivateWriteHome() {
   const { home } = paths();
-  fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+  let stats = ensureStateHome(home);
   const defaultHome = path.join(os.homedir(), ".grok-wechat");
-  if (home === defaultHome && !fs.lstatSync(home).isSymbolicLink()) {
+  if (home === defaultHome) {
     const fd = fs.openSync(home, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
     try {
-      if ((fs.fstatSync(fd).mode & 0o7777) !== 0o700) fs.fchmodSync(fd, 0o700);
+      stats = fs.fstatSync(fd);
+      if ((stats.mode & 0o7777) !== 0o700) {
+        fs.fchmodSync(fd, 0o700);
+        stats = fs.fstatSync(fd);
+      }
     } finally {
       fs.closeSync(fd);
     }
   }
-  const stats = fs.statSync(home);
   if (stats.mode & 0o022) throw new Error(`grok-wechat: state directory is writable by other users: ${home}`);
   warnIfExposed(home, stats);
   ensureHome();
@@ -112,20 +136,46 @@ function migrateLegacyState(raw) {
   return state;
 }
 
-export function loadState({ createHome = true } = {}) {
-  if (createHome) ensureHome();
-  const { state, inbox, media, log } = paths();
-  for (const file of [state, inbox, media, log]) warnIfExposed(file);
-  if (!fs.existsSync(state)) return emptyState();
+function readCredential(file) {
+  const flags = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
+  let fd;
   try {
-    const raw = JSON.parse(fs.readFileSync(state, "utf8"));
-    return { ...emptyState(), ...migrateLegacyState(raw) };
-  } catch {
-    return emptyState();
+    fd = fs.openSync(file, flags);
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    if (error.code === "ELOOP") throw new Error(`grok-wechat: credential file is a symbolic link: ${file}`);
+    throw error;
+  }
+  try {
+    const stats = fs.fstatSync(fd);
+    if (!stats.isFile()) throw new Error(`grok-wechat: credential path must be a regular file: ${file}`);
+    warnIfExposed(file, stats);
+    const content = fs.readFileSync(fd, "utf8");
+    try {
+      return JSON.parse(content);
+    } catch (error) {
+      if (error instanceof SyntaxError) return null;
+      throw error;
+    }
+  } finally {
+    fs.closeSync(fd);
   }
 }
 
+export function loadState({ createHome = true } = {}) {
+  const { home, state, inbox, media, log } = paths();
+  const stats = createHome ? ensureHome() : checkStateHome(home);
+  if (!stats) return emptyState();
+  warnIfExposed(home, stats);
+  for (const file of [inbox, media, log]) warnIfExposed(file);
+  const raw = readCredential(state);
+  return raw ? { ...emptyState(), ...migrateLegacyState(raw) } : emptyState();
+}
+
 function writePrivateJson(file, value) {
+  if (fs.lstatSync(file, { throwIfNoEntry: false })?.isSymbolicLink()) {
+    throw new Error(`grok-wechat: credential file is a symbolic link: ${file}`);
+  }
   const payload = JSON.stringify(value, null, 2);
   const tmp = `${file}.${randomUUID()}.tmp`;
   const fd = fs.openSync(tmp, "wx", 0o600);
@@ -423,16 +473,9 @@ export function fallbackWakePath() {
 }
 
 export function loadFallbackWake() {
-  const wakeFile = fallbackWakePath();
-  warnIfExposed(wakeFile);
-  if (!fs.existsSync(wakeFile)) return null;
-  try {
-    const cfg = JSON.parse(fs.readFileSync(wakeFile, "utf8"));
-    if (cfg.url && cfg.key) return { url: cfg.url, key: cfg.key };
-  } catch {
-    // ignore
-  }
-  return null;
+  if (!checkStateHome(homeDir())) return null;
+  const cfg = readCredential(fallbackWakePath());
+  return cfg?.url && cfg.key ? { url: cfg.url, key: cfg.key } : null;
 }
 
 export function saveGlobalWake(url, key) {

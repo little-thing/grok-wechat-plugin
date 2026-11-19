@@ -14,7 +14,7 @@ const url = "https://api2.cursor.sh/automations/webhook/routine_fixture-1";
 const key = "fixture-key";
 
 test("setup validates and saves both wake scopes without probing or returning credentials", (t) => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "grok-wechat-wake-test-"));
+  const home = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "grok-wechat-wake-test-"));
   const previousHome = process.env.GROK_WECHAT_HOME;
   process.env.GROK_WECHAT_HOME = home;
   t.after(() => {

@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,9 +10,10 @@ import { homeDir, isMonitorProcess, listAccounts, loadState, monitorEntryPath } 
 const GROK_BOX_HOME = "/home/box";
 const PLUGIN_NAME = "grok-wechat-plugin";
 const STATE_FILES = [
-  "account.json", "wake.json", "inbox.jsonl", "monitor.pid", "monitor.log",
+  "inbox.jsonl", "monitor.pid", "monitor.log",
   "ensure-monitor.sh", "connector-active",
 ];
+const CREDENTIAL_TEMP = /^(?:account|wake)\.json\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.tmp$/;
 
 function standardStateHomes() {
   return [...new Set([GROK_BOX_HOME, os.homedir()].map((home) => path.join(home, ".grok-wechat")))];
@@ -23,6 +24,7 @@ function checkedEntry(file, type) {
     const stats = fs.lstatSync(file);
     const correctType = type === "dir" ? stats.isDirectory() : stats.isFile();
     if (!correctType || fs.realpathSync(file) !== file) return null;
+    if (type === "private-file" && (stats.uid !== process.getuid() || stats.nlink !== 1 || (stats.mode & 0o077))) return null;
     return { path: file, dev: stats.dev, ino: stats.ino };
   } catch {
     return null;
@@ -33,22 +35,48 @@ function sameEntry(a, b) {
   return Boolean(a && b && a.path === b.path && a.dev === b.dev && a.ino === b.ino);
 }
 
-function readJson(file) {
-  if (!checkedEntry(file, "file")) return null;
+function readJson(file, entry = checkedEntry(file, "file")) {
+  if (!entry) return null;
+  let fd;
   try {
-    const flag = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
-    return JSON.parse(fs.readFileSync(file, { encoding: "utf8", flag }));
+    const flags = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
+    fd = fs.openSync(file, flags);
+    const stats = fs.fstatSync(fd);
+    if (!stats.isFile() || stats.dev !== entry.dev || stats.ino !== entry.ino) return null;
+    return JSON.parse(fs.readFileSync(fd, "utf8"));
   } catch {
     return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
   }
 }
 
-function hasStateEvidence(dir) {
-  const account = readJson(path.join(dir, "account.json"));
+function nonBlank(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isAccountState(account) {
   if (Array.isArray(account?.accounts) && Array.isArray(account.pendingQrs) && Array.isArray(account.allowFrom)) return true;
-  if (typeof account?.token === "string" && (typeof account.ilinkBotId === "string" || account.pendingQr?.qrcode)) return true;
-  const wake = readJson(path.join(dir, "wake.json"));
-  return typeof wake?.url === "string" && typeof wake?.key === "string";
+  return (nonBlank(account?.token) && nonBlank(account.ilinkBotId)) || nonBlank(account?.pendingQr?.qrcode);
+}
+
+function isWakeState(wake) {
+  return nonBlank(wake?.url) && nonBlank(wake.key);
+}
+
+function credentialEntries(dir) {
+  return [
+    ["account.json", isAccountState],
+    ["wake.json", isWakeState],
+  ].map(([name, matches]) => {
+    const file = path.join(dir, name);
+    const entry = checkedEntry(file, "file");
+    return matches(readJson(file, entry)) ? entry : null;
+  }).filter(Boolean);
+}
+
+function hasStateEvidence(dir) {
+  return credentialEntries(dir).length > 0;
 }
 
 export function validateStateHome(dir, standardHomes = standardStateHomes(), protectedHomes = [os.homedir(), GROK_BOX_HOME, os.tmpdir()]) {
@@ -57,9 +85,28 @@ export function validateStateHome(dir, standardHomes = standardStateHomes(), pro
   const root = checkedEntry(dir, "dir");
   if (!root) return null;
   if (standardHomes.includes(dir)) return { root, dedicated: true };
-  if (!hasStateEvidence(dir)) return null;
+  const credentials = credentialEntries(dir);
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch (error) {
+    if (["EACCES", "EPERM", "ENOENT"].includes(error.code)) return null;
+    throw error;
+  }
+  const temporaryCredentials = names.sort()
+    .filter((name) => CREDENTIAL_TEMP.test(name))
+    .map((name) => checkedEntry(path.join(dir, name), "private-file")).filter(Boolean);
+  if (!credentials.length) {
+    // A first write may have stopped before publishing any credential file.
+    const files = temporaryCredentials.filter((file) => {
+      const matches = path.basename(file.path).startsWith("account.") ? isAccountState : isWakeState;
+      return matches(readJson(file.path, file));
+    });
+    return files.length ? { root, dedicated: false, files } : null;
+  }
 
-  const files = STATE_FILES.map((name) => checkedEntry(path.join(dir, name), "file")).filter(Boolean);
+  const known = STATE_FILES.map((name) => checkedEntry(path.join(dir, name), "file")).filter(Boolean);
+  const files = [...credentials, ...known, ...temporaryCredentials];
   const media = checkedEntry(path.join(dir, "media"), "dir");
   if (media) {
     for (const name of fs.readdirSync(media.path).sort()) {
@@ -196,22 +243,41 @@ function matchingProfiles() {
   }).filter(Boolean);
 }
 
+function replaceProfile(entry, fd, stats, content) {
+  const tmp = `${entry.path}.grok-wechat.${randomUUID()}.tmp`;
+  const tmpFd = fs.openSync(tmp, "wx", 0o600);
+  try {
+    try {
+      fs.writeFileSync(tmpFd, content);
+      const tmpStats = fs.fstatSync(tmpFd);
+      if (tmpStats.uid !== stats.uid || tmpStats.gid !== stats.gid) fs.fchownSync(tmpFd, stats.uid, stats.gid);
+      fs.fchmodSync(tmpFd, stats.mode & 0o7777);
+      fs.fsyncSync(tmpFd);
+    } finally {
+      fs.closeSync(tmpFd);
+    }
+    const current = fs.fstatSync(fd);
+    if (current.nlink !== 1 || current.size !== stats.size || current.mtimeMs !== stats.mtimeMs
+        || current.ctimeMs !== stats.ctimeMs || !sameEntry(entry, checkedEntry(entry.path, "file"))) return false;
+    fs.renameSync(tmp, entry.path);
+    return true;
+  } finally {
+    try { fs.unlinkSync(tmp); } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+}
+
 function editProfile(entry, write) {
-  const flags = write ? fs.constants.O_RDWR : fs.constants.O_RDONLY;
-  const fd = fs.openSync(entry.path, flags | fs.constants.O_NOFOLLOW);
+  const flags = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
+  const fd = fs.openSync(entry.path, flags);
   try {
     const stats = fs.fstatSync(fd);
     if (!stats.isFile() || stats.nlink !== 1 || stats.dev !== entry.dev || stats.ino !== entry.ino) return false;
     const current = fs.readFileSync(fd, "utf8");
     const next = withoutAutostart(current);
     if (current === next) return false;
-    if (write) {
-      const bytes = Buffer.from(next);
-      let offset = 0;
-      while (offset < bytes.length) offset += fs.writeSync(fd, bytes, offset, bytes.length - offset, offset);
-      fs.ftruncateSync(fd, bytes.length);
-    }
-    return true;
+    return !write || replaceProfile(entry, fd, stats, next);
   } finally {
     fs.closeSync(fd);
   }

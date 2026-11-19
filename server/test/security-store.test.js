@@ -9,7 +9,7 @@ import {
 } from "../store.js";
 
 function fixture(t, custom) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "grok-wechat-store-"));
+  const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "grok-wechat-store-"));
   const prevHome = process.env.HOME;
   const prevCustom = process.env.GROK_WECHAT_HOME;
   const prevUmask = process.umask(0o022);
@@ -93,4 +93,53 @@ test("a failed rename leaves no temporary credential file", (t) => {
   fs.mkdirSync(state, { recursive: true });
   assert.throws(() => saveState(emptyState()));
   assert.deepEqual(fs.readdirSync(home).sort(), ["account.json", "media"]);
+});
+
+test("read-only state loading warns about the custom home, even if its files are private", (t) => {
+  fixture(t, "read-only");
+  const { home, state } = paths();
+  fs.mkdirSync(home, { mode: 0o755 });
+  fs.writeFileSync(state, JSON.stringify(emptyState()), { mode: 0o600 });
+  const warnings = [];
+  const oldWarn = process.emitWarning;
+  process.emitWarning = (warning) => warnings.push(warning);
+  try {
+    assert.deepEqual(loadState({ createHome: false }), emptyState());
+  } finally {
+    process.emitWarning = oldWarn;
+  }
+  assert.ok(warnings.some((warning) => warning.includes(home + " has mode 755")));
+  assert.equal(mode(home), 0o755);
+});
+
+test("linked credential files are rejected for reads and writes", (t) => {
+  fixture(t, "linked-files");
+  const { home, state } = paths();
+  fs.mkdirSync(home, { mode: 0o700 });
+  const target = path.join(path.dirname(home), "credential-target");
+  const original = JSON.stringify({ token: "fixture", ilinkBotId: "fixture", url: "https://example.invalid", key: "fixture" });
+  fs.writeFileSync(target, original, { mode: 0o644 });
+  fs.symlinkSync(target, state);
+  fs.symlinkSync(target, path.join(home, "wake.json"));
+  assert.throws(() => loadState(), /credential file is a symbolic link/);
+  assert.throws(() => loadFallbackWake(), /credential file is a symbolic link/);
+  assert.throws(() => saveState(emptyState()), /credential file is a symbolic link/);
+  assert.throws(() => saveGlobalWake("https://example.invalid", "fixture"), /credential file is a symbolic link/);
+  assert.equal(fs.readFileSync(target, "utf8"), original);
+});
+
+test("linked state homes and linked ancestors are rejected before creating credential files", (t) => {
+  fixture(t, "alias");
+  const { home } = paths();
+  const target = path.join(path.dirname(home), "actual");
+  fs.mkdirSync(target, { mode: 0o700 });
+  fs.symlinkSync(target, home, "dir");
+  for (const configured of [home, path.join(home, "missing")]) {
+    process.env.GROK_WECHAT_HOME = configured;
+    assert.throws(() => loadState(), /state directory must be a real directory/);
+    assert.throws(() => loadFallbackWake(), /state directory must be a real directory/);
+    assert.throws(() => saveState(emptyState()), /state directory must be a real directory/);
+    assert.throws(() => saveGlobalWake("https://example.invalid", "fixture"), /state directory must be a real directory/);
+  }
+  assert.deepEqual(fs.readdirSync(target), []);
 });
