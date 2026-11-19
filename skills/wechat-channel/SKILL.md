@@ -25,7 +25,7 @@ description: 用户要在 Grok Bot 里安装、登录、收发、调整监听保
 3. **monitor 自启**：用户登录或 MCP `initialize` 时调用 `wechat_start_monitor` 拉起后台长轮询。已绑定账号时，每个账号独立长轮询入站。
 4. **安装助手**查找并复用已有的同名 Routine，只创建缺失的 Routine（全渠道共用）：
    - **「微信入站唤醒」**（webhook）：入站后 `wechat_inbox` → 按 `ilink_bot_id` 转交专属助手，专属助手立刻向该微信对端 `wechat_send`
-   - **「微信监听保活」**：用户指定间隔时，按下方的统一规则校验，并将通过校验的间隔用于新建 Routine 或更新已有 Routine 的调度。用户未指定时，新建使用每 5 分钟，复用则沿用现有调度。提示词 `只调用 wechat_start_monitor，确保微信入站监听在跑。除此之外什么都不要做。`
+   - **「微信监听保活」**：用户指定间隔时，按下方的统一规则校验，并将通过校验的间隔用于新建 Routine 或更新已有 Routine 的调度。更新已有 Routine 时只修改调度，保留其原有提示词和启用状态。用户未指定时，新建使用每 5 分钟，复用则沿用现有调度。提示词 `只调用 wechat_start_monitor，确保微信入站监听在跑。除此之外什么都不要做。`
 5. **全局 webhook（粘贴一次）**：Grok Bot 创建 webhook Routine 时**不会**把 url/key 返回给 agent；用户从该 Routine 面板复制 **webhook 地址**和**密钥**发来一次。安装助手调用 `wechat_set_wake`（url、key，省略 `ilink_bot_id`）写入全局 `wake.json`（权限 600），当前及后续所有已绑定账号共用。`wechat_status` 的 `global_wake_configured=true` 表示入站已就绪。
 6. **扫码绑定**：`wechat_login_start` 出码并向用户展示 → 立即 `wechat_login_wait`，重复调用直至 `logged_in=true`；若 `expired=true` 则重新 `wechat_login_start` 后再 `wechat_login_wait`。对方先发一条才有 context_token。
 
