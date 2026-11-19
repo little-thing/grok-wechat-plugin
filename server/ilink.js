@@ -7,13 +7,13 @@ import path from "node:path";
 import {
   contextFor,
   emptyAccount,
+  ensureMediaDirectory,
   findAccount,
   hasAccountWake,
   hasGlobalWake,
   listAccounts,
   loadState,
   localTokenList,
-  paths,
   peekInboxCount,
   rememberContext,
   resolveAccountForPeer,
@@ -312,7 +312,7 @@ async function downloadMedia(media, label) {
   const cipher = Buffer.from(await res.arrayBuffer());
   const key = parseAesKey(media.aes_key);
   const plain = aesEcb(cipher, key, "decrypt");
-  const file = mediaFilePath(paths().media, label);
+  const file = mediaFilePath(ensureMediaDirectory(), label);
   fs.writeFileSync(file, plain, { mode: 0o600 });
   return file;
 }

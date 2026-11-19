@@ -86,10 +86,15 @@ function ensureStateHome(home) {
   return checkStateHome(home);
 }
 
+export function ensureMediaDirectory() {
+  const { media } = paths();
+  ensureStateHome(media);
+  return media;
+}
+
 function ensureHome() {
-  const { home, media } = paths();
-  const stats = ensureStateHome(home);
-  fs.mkdirSync(media, { recursive: true, mode: 0o700 });
+  const stats = ensureStateHome(homeDir());
+  ensureMediaDirectory();
   return stats;
 }
 

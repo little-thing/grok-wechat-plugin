@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { createCipheriv } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { ITEM, normalizeInbound } from "../ilink.js";
 import {
   appendInbox, drainInbox, emptyState, loadFallbackWake, loadState, paths,
   readPid, saveGlobalWake, saveState, saveStateSecure, updateState, writePid,
@@ -142,4 +144,38 @@ test("linked state homes and linked ancestors are rejected before creating crede
     assert.throws(() => saveGlobalWake("https://example.invalid", "fixture"), /state directory must be a real directory/);
   }
   assert.deepEqual(fs.readdirSync(target), []);
+});
+
+test("inbound media writes to a private directory and rechecks it after downloading", async (t) => {
+  fixture(t, "media");
+  const { home, media } = paths();
+  const key = Buffer.alloc(16);
+  const cipher = createCipheriv("aes-128-ecb", key, null);
+  const contents = Buffer.from("test attachment");
+  const encrypted = Buffer.concat([cipher.update(contents), cipher.final()]);
+  const fetchMock = t.mock.method(globalThis, "fetch", async () => new Response(encrypted));
+  const message = {
+    item_list: [{ type: ITEM.FILE, file_item: {
+      file_name: "attachment.txt",
+      media: { full_url: "https://example.invalid/attachment", aes_key: key.toString("base64") },
+    } }],
+  };
+
+  const { items: [{ path: saved }] } = await normalizeInbound(message);
+  assert.equal(path.dirname(saved), media);
+  assert.deepEqual(fs.readFileSync(saved), contents);
+  assert.equal(mode(media), 0o700);
+  assert.equal(mode(saved), 0o600);
+
+  const outside = path.join(path.dirname(home), "outside-media");
+  fs.mkdirSync(outside, { mode: 0o700 });
+  fetchMock.mock.mockImplementation(async () => {
+    fs.rmSync(media, { recursive: true });
+    fs.symlinkSync(outside, media, "dir");
+    return new Response(encrypted);
+  });
+  const blocked = await normalizeInbound(message);
+  assert.equal(blocked.items[0].path, null);
+  assert.deepEqual(fs.readdirSync(outside), []);
+  assert.throws(() => loadState(), /state directory must be a real directory/);
 });
