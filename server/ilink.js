@@ -393,15 +393,21 @@ async function sendItem(account, to, item, contextToken) {
     },
   };
   const resp = await apiPost(account.baseUrl, "ilink/bot/sendmessage", body, account.token);
-  if (resp.ret && resp.ret !== 0) {
-    throw new Error(`发送失败 ret=${resp.ret} ${resp.errmsg || ""}`);
+  const ret = resp.ret ?? 0;
+  const errcode = resp.errcode ?? 0;
+  if (ret !== 0 || errcode !== 0) {
+    const details = `发送失败 ret=${ret} errcode=${errcode}${resp.errmsg ? ` ${resp.errmsg}` : ""}`;
+    if (ret === ERR_SESSION_EXPIRED || errcode === ERR_SESSION_EXPIRED) {
+      throw new Error(`${details}。微信会话已过期，请让对方先在微信中给机器人发一条新消息，再重试发送。`);
+    }
+    throw new Error(details);
   }
   return {
     to_user_id: to,
     ilink_bot_id: account.ilinkBotId,
     ilink_user_id: account.ilinkUserId,
     context_token: token || "",
-    ret: resp.ret ?? 0,
+    ret,
   };
 }
 
