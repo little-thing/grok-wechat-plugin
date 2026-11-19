@@ -32,7 +32,7 @@ Grok Bot 的微信 iLink 渠道。扫码绑定个人号后，私信经共享 web
    对话里会出现「加」按钮，点一下，把微信渠道接到 Grok Bot。
 
 2. **连接器与共用 Routine**  
-   安装助手加上微信连接器，并创建两条 Routine：**「微信入站唤醒」**（Webhook）与 **「微信监听保活」**（每 5 分钟 `wechat_start_monitor`）。webhook Routine 创建后平台不把 url/key 返回给 agent；用户从该 Routine 面板复制地址与密钥发来**一次**，安装助手 `wechat_set_wake` 写入全局 `wake.json`，当前及后续绑定账号共用。
+   安装助手加上微信连接器，并创建两条 Routine：**「微信入站唤醒」**（Webhook）与 **「微信监听保活」**（默认每 5 分钟调用 `wechat_start_monitor`）。webhook Routine 创建后平台不把 url/key 返回给 agent；用户从该 Routine 面板复制地址与密钥发来**一次**，安装助手 `wechat_set_wake` 写入全局 `wake.json`，当前及后续绑定账号共用。
 
 3. **扫码登录微信**  
    `wechat_login_start` 出码 → 立即 `wechat_login_wait` 至 `logged_in=true`。每次绑定成功后**创建该号的专属 Grok Bot 助手**，描述为：
@@ -44,7 +44,13 @@ Grok Bot 的微信 iLink 渠道。扫码绑定个人号后，私信经共享 web
 4. **绑定完成**  
    `wechat_status` 显示 `global_wake_configured=true` 与各账号 `dedicated_assistant_name`。入站由安装助手 `wechat_inbox` 后按 `ilink_bot_id` 转交专属助手，专属助手立刻向该微信对端 `wechat_send`。
 
-对方发来一条微信私信，专属助手立刻在微信里回复。
+监听运行时，对方发来微信私信即可触发专属助手回复。
+
+## 监听保活间隔
+
+默认 **5 分钟**，也是 Grok Bot 支持的最短间隔。安装时可以指定更长的间隔，已安装的用户可以对安装助手说「把微信监听保活改为每 30 分钟一次」，无需重新绑定。
+
+> 间隔越长，保活触发越少。如果监听进程已停止或云电脑已休眠，微信消息可能要等到下一次保活成功启动监听后才会处理。
 
 ## 绑定后的效果
 
