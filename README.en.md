@@ -32,7 +32,7 @@ Follow the conversation. The full flow looks like this:
    Tap **加** in the chat to attach the WeChat channel to Grok Bot.
 
 2. **Connector and shared routines**  
-   The installing assistant adds the WeChat connector and creates two routines: **「微信入站唤醒」** (webhook) and **「微信监听保活」** (every 5 minutes, `wechat_start_monitor`). Creating the webhook routine does not return url/key to the agent; the user copies them once from that routine's panel and sends them. The assistant calls `wechat_set_wake` to write global `wake.json` for all current and future bound accounts.
+   The installing assistant adds the WeChat connector and creates two routines: **「微信入站唤醒」** (webhook) and **「微信监听保活」** (runs `wechat_start_monitor` every 5 minutes by default). Creating the webhook routine does not return url/key to the agent; the user copies them once from that routine's panel and sends them. The assistant calls `wechat_set_wake` to write global `wake.json` for all current and future bound accounts.
 
 3. **Scan to log in**  
    `wechat_login_start` shows a QR code, then immediately `wechat_login_wait` until `logged_in=true`. After each bind, **create a dedicated Grok Bot assistant** for that WeChat number. Use this description:
@@ -44,7 +44,13 @@ Follow the conversation. The full flow looks like this:
 4. **Binding complete**  
    `wechat_status` shows `global_wake_configured=true` and each account's `dedicated_assistant_name`. Inbound: the installing assistant calls `wechat_inbox`, then forwards by `ilink_bot_id` to that account's dedicated assistant, which immediately replies to that WeChat peer with `wechat_send`.
 
-When someone sends a WeChat DM, the dedicated assistant replies there immediately.
+While the monitor is running, an incoming WeChat DM triggers a reply from the dedicated assistant.
+
+## Monitor keepalive interval
+
+The default is **5 minutes**, the shortest interval Grok Bot supports. You can specify a longer interval during setup. After setup, tell the installing assistant, “Change the 微信监听保活 routine to run every 30 minutes.” Your existing WeChat bindings are reused.
+
+> Longer intervals mean fewer keepalive runs. If the monitor has stopped or the cloud computer is asleep, processing incoming WeChat messages may have to wait until a keepalive run successfully restarts the monitor.
 
 ## After binding
 
