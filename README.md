@@ -74,7 +74,7 @@ Grok Bot 的微信 iLink 渠道。扫码绑定个人号后，私信经共享 web
 
 安装细节见 `skills/wechat-channel/SKILL.md`。
 
-## 一句话卸载
+## 卸载
 
 在 Grok Bot 里发：
 
@@ -82,11 +82,9 @@ Grok Bot 的微信 iLink 渠道。扫码绑定个人号后，私信经共享 web
 卸掉微信插件
 ```
 
-安装助手会：
+1. 安装助手调用 `wechat_uninstall`，向你展示 `confirmation_token`、待清理的绝对路径和跳过的自定义状态目录。也可以在插件目录运行 `sh scripts/uninstall.sh` 查看预览。
+2. 核对路径后，在连接器所在主机的插件目录运行 `sh scripts/uninstall.sh --confirm TOKEN`，使用同一 `GROK_WECHAT_HOME` 设置，并将 `TOKEN` 替换为返回的 `confirmation_token`。如果命令返回新预览，请核对更新后的路径再确认。
+3. 命令返回 `uninstalled: true` 或 `cleanup_deferred: true` 后，安装助手卸载 `grok-wechat` 连接器，并删除所有助手上名为「微信入站唤醒」和「微信监听保活」的 Routine。延迟清理会等待连接器和监听进程退出。如果进程持续运行导致清理超时，请在进程退出后重新预览并确认。
+4. 在侧栏右键删除 `dedicated_assistants_sidebar_delete` 所列的专属助手（如「微信1」「微信2」）。
 
-1. 调用 `wechat_uninstall` 清理本机，并读取 `dedicated_assistants_sidebar_delete` 中的专属助手名称。
-2. 卸载 `grok-wechat` 连接器。
-3. 删除安装助手上 Routine「微信入站唤醒」与「微信监听保活」，并删除其他助手上残留的同名 Routine。
-4. 告知用户在侧栏右键删除返回列表中的专属助手（如「微信1」「微信2」）。
-
-连接器进程退出或重启（Grok Bot 更新、box 重启）不会触发本机清理，避免误删登录态；请先在对话里说「卸掉微信插件」再删连接器。完成后重装需重新粘贴 webhook 并扫码，`wechat_status` 为零账号。
+`GROK_WECHAT_HOME` 请使用不含软链接的实际目录路径。通过验证的自定义状态目录会保留无关文件。清理后重装需要重新配置 webhook 并扫码。

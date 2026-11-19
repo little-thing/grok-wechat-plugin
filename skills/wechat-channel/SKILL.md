@@ -59,7 +59,7 @@ stdio 支持换行分隔 JSON 与 Content-Length 分帧。
 |---|---|
 | `wechat_login_start` | 出码并展示给用户，下一步立即 `wechat_login_wait` |
 | `wechat_login_wait` | 轮询扫码；`logged_in=true` 时拉起 monitor；`expired=true` 时重新出码 |
-| `wechat_set_wake` | 保存全局 webhook（url、key 必填）。可选 `ilink_bot_id` 同时写入该账号 |
+| `wechat_set_wake` | 保存 Grok Bot Routine 面板里的 HTTPS webhook 地址和密钥，仅接受 `https://api2.cursor.sh/automations/webhook/<id>`。保存时不发送探测请求；可以从微信发一条测试消息来确认唤醒。可选 `ilink_bot_id` 同时写入该账号 |
 | `wechat_set_dedicated_assistant` | 为已绑定账号登记专属助手 `assistant_id` / `assistant_name`。创建时描述写明：入站转交后立刻向该微信对端回复 |
 | `wechat_status` | 账号列表、`global_wake_configured`、各号专属助手 / peers、allowlist、inbox、monitor |
 | `wechat_inbox` | 立即取出 monitor 缓存的入站消息（取出后清空） |
@@ -70,7 +70,7 @@ stdio 支持换行分隔 JSON 与 Content-Length 分帧。
 | `wechat_stop_monitor` | 停止后台长轮询 |
 | `wechat_approve` | `user_id` 加入 allowlist；`clear=true` 清空后接收全部私信。空列表表示接收全部 |
 | `wechat_logout` | 默认登出全部并停 monitor；传入 `ilink_bot_id` 只登出一个 |
-| `wechat_uninstall` | 本机完整清理，返回 `platform_cleanup` 与 `dedicated_assistants_sidebar_delete` |
+| `wechat_uninstall` | 预览本机清理，返回待清理路径和 `confirmation_token`，由用户核对后确认 |
 
 ## 入站之后
 
@@ -99,13 +99,9 @@ stdio 支持换行分隔 JSON 与 Content-Length 分帧。
 
 ### 1. 本机清理
 
-调用 `wechat_uninstall`（或 `scripts/uninstall.sh`）：
-
-- 停止所有 monitor 进程
-- 删除 `/home/box/grok-wechat-plugin` 与 `GROK_WECHAT_HOME` / `/home/box/.grok-wechat`（含 `account.json`、`wake.json`、token、inbox、media、pid、log、`ensure-monitor.sh`）
-- 清理 crontab 与 shell 自启项
-
-返回 `dedicated_assistants_sidebar_delete`（绑定期间登记的专属助手名称）。连接器进程退出或重启**不会**触发本机清理；必须先调用 `wechat_uninstall` 再卸载连接器。
+1. 调用 `wechat_uninstall` 获取预览。向用户展示待清理的绝对路径、跳过的自定义状态目录和 `confirmation_token`。也可以在插件目录运行 `sh scripts/uninstall.sh` 获取预览。
+2. 请用户核对路径，在连接器所在主机的插件目录运行 `sh scripts/uninstall.sh --confirm TOKEN`。使用同一 `GROK_WECHAT_HOME` 设置，并将 `TOKEN` 替换为返回的 `confirmation_token`。如果返回新预览，请用户核对更新后的路径再确认。
+3. 确认后会停止经过验证的 monitor，清理插件状态、插件目录和匹配的自启项。通过验证的自定义状态目录会保留无关文件。命令返回 `uninstalled: true` 或 `cleanup_deferred: true` 后，执行平台清理。延迟清理会等待连接器和 monitor 退出。如果进程持续运行导致清理超时，请在进程退出后重新预览并确认。
 
 ### 2. 平台清理（安装助手执行）
 

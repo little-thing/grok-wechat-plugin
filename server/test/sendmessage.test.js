@@ -13,7 +13,7 @@ const mediaFixture = fileURLToPath(new URL("../package.json", import.meta.url));
 let stateDir;
 
 before(() => {
-  stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "grok-wechat-send-test-"));
+  stateDir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "grok-wechat-send-test-"));
   process.env.GROK_WECHAT_HOME = stateDir;
   const account = {
     ...emptyAccount(),

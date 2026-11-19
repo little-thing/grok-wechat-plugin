@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -47,10 +48,75 @@ export function emptyState() {
   };
 }
 
+const warnedModes = new Set();
+
+function warnIfExposed(file, stats) {
+  if (!stats) {
+    try {
+      stats = fs.lstatSync(file, { throwIfNoEntry: false });
+    } catch {
+      return;
+    }
+  }
+  if (!stats || stats.isSymbolicLink() || !(stats.mode & 0o077)) return;
+  const mode = (stats.mode & 0o777).toString(8);
+  const warning = `grok-wechat: ${file} has mode ${mode}; restrict access to the owner`;
+  if (warnedModes.has(warning)) return;
+  warnedModes.add(warning);
+  process.emitWarning(warning);
+}
+
+function checkStateHome(home) {
+  const stats = fs.lstatSync(home, { throwIfNoEntry: false });
+  if (!stats) {
+    const parent = path.dirname(home);
+    if (parent !== home) checkStateHome(parent);
+    return null;
+  }
+  if (!stats.isDirectory() || fs.realpathSync(home) !== home) {
+    throw new Error(`grok-wechat: state directory must be a real directory without symbolic links: ${home}`);
+  }
+  return stats;
+}
+
+function ensureStateHome(home) {
+  const existing = checkStateHome(home);
+  if (existing) return existing;
+  fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+  return checkStateHome(home);
+}
+
+export function ensureMediaDirectory() {
+  const { media } = paths();
+  ensureStateHome(media);
+  return media;
+}
+
 function ensureHome() {
-  const { home, media } = paths();
-  fs.mkdirSync(home, { recursive: true });
-  fs.mkdirSync(media, { recursive: true });
+  const stats = ensureStateHome(homeDir());
+  ensureMediaDirectory();
+  return stats;
+}
+
+function ensurePrivateWriteHome() {
+  const { home } = paths();
+  let stats = ensureStateHome(home);
+  const defaultHome = path.join(os.homedir(), ".grok-wechat");
+  if (home === defaultHome) {
+    const fd = fs.openSync(home, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+    try {
+      stats = fs.fstatSync(fd);
+      if ((stats.mode & 0o7777) !== 0o700) {
+        fs.fchmodSync(fd, 0o700);
+        stats = fs.fstatSync(fd);
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+  if (stats.mode & 0o022) throw new Error(`grok-wechat: state directory is writable by other users: ${home}`);
+  warnIfExposed(home, stats);
+  ensureHome();
 }
 
 function migrateLegacyState(raw) {
@@ -75,24 +141,66 @@ function migrateLegacyState(raw) {
   return state;
 }
 
-export function loadState() {
-  ensureHome();
-  const { state } = paths();
-  if (!fs.existsSync(state)) return emptyState();
+function readCredential(file) {
+  const flags = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
+  let fd;
   try {
-    const raw = JSON.parse(fs.readFileSync(state, "utf8"));
-    return { ...emptyState(), ...migrateLegacyState(raw) };
-  } catch {
-    return emptyState();
+    fd = fs.openSync(file, flags);
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    if (error.code === "ELOOP") throw new Error(`grok-wechat: credential file is a symbolic link: ${file}`);
+    throw error;
+  }
+  try {
+    const stats = fs.fstatSync(fd);
+    if (!stats.isFile()) throw new Error(`grok-wechat: credential path must be a regular file: ${file}`);
+    warnIfExposed(file, stats);
+    const content = fs.readFileSync(fd, "utf8");
+    try {
+      return JSON.parse(content);
+    } catch (error) {
+      if (error instanceof SyntaxError) return null;
+      throw error;
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+export function loadState({ createHome = true } = {}) {
+  const { home, state, inbox, media, log } = paths();
+  const stats = createHome ? ensureHome() : checkStateHome(home);
+  if (!stats) return emptyState();
+  warnIfExposed(home, stats);
+  for (const file of [inbox, media, log]) warnIfExposed(file);
+  const raw = readCredential(state);
+  return raw ? { ...emptyState(), ...migrateLegacyState(raw) } : emptyState();
+}
+
+function writePrivateJson(file, value) {
+  if (fs.lstatSync(file, { throwIfNoEntry: false })?.isSymbolicLink()) {
+    throw new Error(`grok-wechat: credential file is a symbolic link: ${file}`);
+  }
+  const payload = JSON.stringify(value, null, 2);
+  const tmp = `${file}.${randomUUID()}.tmp`;
+  const fd = fs.openSync(tmp, "wx", 0o600);
+  try {
+    try {
+      fs.fchmodSync(fd, 0o600);
+      fs.writeFileSync(fd, payload);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmp, file);
+  } catch (error) {
+    try { fs.unlinkSync(tmp); } catch {}
+    throw error;
   }
 }
 
 export function saveState(next) {
-  ensureHome();
-  const { state } = paths();
-  const tmp = `${state}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(next, null, 2));
-  fs.renameSync(tmp, state);
+  ensurePrivateWriteHome();
+  writePrivateJson(paths().state, next);
 }
 
 export function updateState(mutator) {
@@ -204,14 +312,14 @@ export function appendInbox(messages) {
   ensureHome();
   const { inbox } = paths();
   const lines = messages.map((m) => JSON.stringify(m)).join("\n") + "\n";
-  fs.appendFileSync(inbox, lines);
+  fs.appendFileSync(inbox, lines, { mode: 0o600 });
 }
 
 export function drainInbox() {
   const { inbox } = paths();
   if (!fs.existsSync(inbox)) return [];
   const raw = fs.readFileSync(inbox, "utf8");
-  fs.writeFileSync(inbox, "");
+  fs.writeFileSync(inbox, "", { mode: 0o600 });
   return raw
     .split("\n")
     .map((line) => line.trim())
@@ -237,7 +345,7 @@ export function peekInboxCount() {
 
 export function writePid(pid) {
   ensureHome();
-  fs.writeFileSync(paths().pid, String(pid));
+  fs.writeFileSync(paths().pid, String(pid), { mode: 0o600 });
 }
 
 export function readPid() {
@@ -331,9 +439,8 @@ function commandLineIsMonitor(line, entry) {
 // Linux thread ids share the pid namespace, so kill(pid, 0) can succeed for a
 // live thread inside the MCP host. A recorded id counts only when argv is this
 // install's server entry plus --monitor.
-export function isMonitorProcess(pid) {
+export function isMonitorProcess(pid, entry = monitorEntryPath()) {
   if (!isPidAlive(pid)) return false;
-  const entry = monitorEntryPath();
   if (process.platform === "linux") {
     const argv = readLinuxArgv(pid);
     return Boolean(argv && argv.includes("--monitor") && argv.some((arg) => sameFile(arg, entry)));
@@ -371,28 +478,14 @@ export function fallbackWakePath() {
 }
 
 export function loadFallbackWake() {
-  const wakeFile = fallbackWakePath();
-  if (!fs.existsSync(wakeFile)) return null;
-  try {
-    const cfg = JSON.parse(fs.readFileSync(wakeFile, "utf8"));
-    if (cfg.url && cfg.key) return { url: cfg.url, key: cfg.key };
-  } catch {
-    // ignore
-  }
-  return null;
+  if (!checkStateHome(homeDir())) return null;
+  const cfg = readCredential(fallbackWakePath());
+  return cfg?.url && cfg.key ? { url: cfg.url, key: cfg.key } : null;
 }
 
 export function saveGlobalWake(url, key) {
-  ensureHome();
-  const wakeFile = fallbackWakePath();
-  const tmp = `${wakeFile}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify({ url, key }, null, 2));
-  fs.renameSync(tmp, wakeFile);
-  try {
-    fs.chmodSync(wakeFile, 0o600);
-  } catch {
-    // ignore
-  }
+  ensurePrivateWriteHome();
+  writePrivateJson(fallbackWakePath(), { url, key });
 }
 
 export function hasGlobalWake() {
@@ -408,11 +501,4 @@ export function hasAccountWake(account) {
   return hasGlobalWake() || Boolean(account?.wake?.url && account?.wake?.key);
 }
 
-export function saveStateSecure(next) {
-  saveState(next);
-  try {
-    fs.chmodSync(paths().state, 0o600);
-  } catch {
-    // ignore
-  }
-}
+export { saveState as saveStateSecure };
